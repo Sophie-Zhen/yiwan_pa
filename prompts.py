@@ -1,7 +1,9 @@
-"""System prompts used by the bot.
+"""System prompts and canned user messages used by the bot.
 
-Centralised here so prompts can evolve without touching bot.py, and so it's
-easy to A/B different phrasings later.
+All prompts are written in English. Output language is controlled either by
+the user's incoming message (the system prompt rule "Reply in the same
+language the user wrote in") or by an explicit `{language}` parameter for
+prompts triggered without a user message (e.g. scheduled digests).
 """
 from datetime import datetime
 
@@ -60,6 +62,21 @@ If a message is genuinely ambiguous between two actions, ask one short clarifyin
 """
 
 
+MORNING_DIGEST_TEMPLATE = """Generate today's morning digest. Read data/inbox.md, then list pending items in three groups:
+
+1. **Today** — items where `due` is today
+2. **Upcoming** — items where `due` is within the next 3 days (excluding today)
+3. **Overdue** — items where `due` has already passed but `status` is still pending
+
+One line per item: the item title plus the key time (e.g. the exact `due` time). If all three groups are empty, say so in a single cheerful line.
+
+Reply in {language} with a friendly tone. No preamble, no closing remarks."""
+
+
 def render_personal_assistant(user_name: str) -> str:
     today = datetime.now().strftime("%Y-%m-%d %H:%M")
     return PERSONAL_ASSISTANT_TEMPLATE.format(user_name=user_name, today=today)
+
+
+def render_morning_digest_request(language: str) -> str:
+    return MORNING_DIGEST_TEMPLATE.format(language=language)
