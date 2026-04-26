@@ -1,8 +1,10 @@
-"""my-assistant v0.1 — iteration 2: bot wired to LLM backend.
+"""my-assistant v0.1 — iteration 3: capture flow.
 
-Receives Telegram text messages, routes them to the configured LLM backend,
-and replies with whatever the LLM returns. No storage / no system prompt yet
-— that arrives in iteration 3 (capture flow).
+The bot now operates as a personal assistant: every Telegram message is
+forwarded to the LLM along with a system prompt that defines the assistant's
+role, the markdown storage format, and the four supported actions
+(capture / query / complete / modify). The LLM uses its file tools to
+read and write data/inbox.md and data/archive.md directly.
 """
 import asyncio
 import logging
@@ -13,6 +15,7 @@ from telegram import Update
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
 from llm import get_backend
+from prompts import render_personal_assistant
 
 load_dotenv()
 logging.basicConfig(
@@ -22,15 +25,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 backend = get_backend()
+USER_NAME = os.getenv("USER_NAME", "the user")
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text
     logger.info("user: %s", text)
-    # The shell-out is blocking and can take seconds. Run it in a thread so
-    # the bot's asyncio event loop stays responsive to other Telegram traffic.
+    system_prompt = render_personal_assistant(USER_NAME)
     try:
-        reply = await asyncio.to_thread(backend.chat, text)
+        reply = await asyncio.to_thread(backend.chat, text, system_prompt)
     except Exception as exc:
         logger.exception("backend.chat failed")
         reply = f"[error] {exc}"
