@@ -74,7 +74,9 @@ Reply in {language} with a friendly tone. No preamble, no closing remarks."""
 
 
 def render_personal_assistant(user_name: str) -> str:
-    today = datetime.now().strftime("%Y-%m-%d %H:%M")
+    # Date-only (no time): keeps the system prompt byte-stable for the whole
+    # day so the prompt cache (in AnthropicBackend) actually hits across calls.
+    today = datetime.now().strftime("%Y-%m-%d")
     return PERSONAL_ASSISTANT_TEMPLATE.format(user_name=user_name, today=today)
 
 
