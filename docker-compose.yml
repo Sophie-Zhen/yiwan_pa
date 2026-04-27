@@ -1,0 +1,15 @@
+services:
+  my-assistant:
+    build: .
+    container_name: my-assistant
+    # `unless-stopped` survives crashes and host reboots, but respects an
+    # explicit `docker compose stop`. This is the right policy for a bot:
+    # auto-recover from failures, but stay down if you intentionally stopped it.
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Mount data/ from the host so inbox.md and archive.md persist across
+      # container rebuilds. Without this, every `docker compose up --build`
+      # would wipe the bot's state.
+      - ./data:/app/data

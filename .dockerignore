@@ -1,0 +1,29 @@
+# Files / directories excluded from the build context. Smaller context =
+# faster builds + smaller image. Also keeps secrets and developer-local
+# state out of the image even if .gitignore misses them.
+
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Secrets
+.env
+.env.local
+
+# User data (mounted at runtime as a volume, not baked into the image)
+data/inbox.md
+data/archive.md
+
+# Editor / OS junk
+.DS_Store
+.vscode/
+.idea/
+
+# Project-meta docs we don't need at runtime
+TODOS.md
+README.md
