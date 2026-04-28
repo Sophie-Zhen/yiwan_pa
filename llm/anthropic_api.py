@@ -44,7 +44,13 @@ from .base import LLMBackend
 logger = logging.getLogger(__name__)
 
 MODEL = "claude-opus-4-7"
-MAX_TOKENS = 1024
+# 16000 is the Anthropic-recommended default for non-streaming. It's a *cap*,
+# not a target — short replies still cost only the tokens they actually use.
+# Lowballing this (e.g. 1024) truncates batch operations: a single user message
+# capturing N items emits N parallel tool_use blocks plus adaptive thinking,
+# which easily exceeds 1024. Above ~16k, switch to streaming to avoid SDK
+# HTTP timeouts.
+MAX_TOKENS = 16000
 MAX_LOOP_TURNS = 10  # safety bound — if exceeded, something is wrong
 
 
