@@ -15,6 +15,7 @@ import logging
 import os
 import re
 from datetime import time
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from telegram import Update
@@ -42,11 +43,21 @@ USER_NAME = os.getenv("USER_NAME", "the user")
 USER_LANGUAGE = os.getenv("USER_LANGUAGE", "Chinese")
 
 
+# Docker containers default to UTC. We read TZ from the environment so the
+# digest fires at the user's wall-clock time. PTB's JobQueue treats a naive
+# datetime.time as UTC by default; attaching tzinfo makes it use local time.
+LOCAL_TZ = ZoneInfo(os.getenv("TZ", "UTC"))
+
+
 def _parse_digest_time(value: str) -> time:
     match = re.match(r"^(\d{1,2}):(\d{2})$", value)
     if not match:
         raise ValueError(f"Invalid DIGEST_TIME {value!r}, expected HH:MM (e.g. 08:30)")
-    return time(hour=int(match.group(1)), minute=int(match.group(2)))
+    return time(
+        hour=int(match.group(1)),
+        minute=int(match.group(2)),
+        tzinfo=LOCAL_TZ,
+    )
 
 
 DIGEST_TIME = _parse_digest_time(os.getenv("DIGEST_TIME", "08:30"))
