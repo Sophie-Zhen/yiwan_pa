@@ -24,7 +24,20 @@ class ClaudeCodeBackend(LLMBackend):
     def __init__(self, timeout_seconds: int = 120) -> None:
         self.timeout_seconds = timeout_seconds
 
-    def chat(self, user_message: str, system_prompt: str = "") -> str:
+    def chat(
+        self,
+        user_message: str,
+        system_prompt: str = "",
+        history: list[dict[str, str]] | None = None,
+    ) -> str:
+        # `history` is accepted to satisfy the LLMBackend interface but
+        # intentionally ignored in v0.1.1 — see
+        # docs/decisions/0001-conversation-history.md. CC's own exploratory
+        # tool use partially compensates by reading inbox/archive on demand.
+        # If we want true multi-turn here later, the path is `claude -p
+        # --resume <session-id>` keyed on chat_id.
+        del history
+
         cmd = [
             "claude",
             "-p",

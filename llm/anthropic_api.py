@@ -209,10 +209,18 @@ class AnthropicBackend(LLMBackend):
         self.client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from env
         self.model = model
 
-    def chat(self, user_message: str, system_prompt: str = "") -> str:
-        messages: list[dict[str, Any]] = [
-            {"role": "user", "content": user_message}
-        ]
+    def chat(
+        self,
+        user_message: str,
+        system_prompt: str = "",
+        history: list[dict[str, str]] | None = None,
+    ) -> str:
+        # Conversation history (if any) goes at the front of the messages
+        # list so the model sees prior turns as context for the new one.
+        # The agent loop appends its own assistant + tool_result blocks on
+        # top of this during a single chat() call.
+        messages: list[dict[str, Any]] = list(history) if history else []
+        messages.append({"role": "user", "content": user_message})
 
         for turn in range(MAX_LOOP_TURNS):
             kwargs: dict[str, Any] = {

@@ -28,6 +28,7 @@ from telegram.ext import (
 
 from llm import get_backend
 from prompts import render_morning_digest_request, render_personal_assistant
+from storage.history import append_turn, read_history
 
 load_dotenv()
 logging.basicConfig(
@@ -54,21 +55,35 @@ _chat_id_env = os.getenv("TELEGRAM_USER_CHAT_ID", "").strip()
 USER_CHAT_ID: int | None = int(_chat_id_env) if _chat_id_env else None
 
 
-async def _ask_llm(user_message: str) -> str:
+async def _ask_llm(
+    user_message: str,
+    history: list[dict[str, str]] | None = None,
+) -> str:
     """Run a single LLM round-trip with the personal-assistant system prompt."""
     system_prompt = render_personal_assistant(USER_NAME)
-    return await asyncio.to_thread(backend.chat, user_message, system_prompt)
+    return await asyncio.to_thread(backend.chat, user_message, system_prompt, history)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text
     chat_id = update.effective_chat.id
     logger.info("user (chat %s): %s", chat_id, text)
+
+    # Read recent history (sliding window: 6 turns AND last 30 min, whichever
+    # is shorter — see storage.history). Empty list on first message.
+    history = read_history(chat_id)
+
     try:
-        reply = await _ask_llm(text)
+        reply = await _ask_llm(text, history=history)
     except Exception as exc:
         logger.exception("backend.chat failed")
         reply = f"[error] {exc}"
+
+    # Persist the turn so the next message sees this exchange in its history.
+    # Stored as user + final assistant text only (no tool_use trajectory) —
+    # see docs/decisions/0001-conversation-history.md.
+    append_turn(chat_id, text, reply)
+
     logger.info("bot: %s", reply[:200])
     await update.message.reply_text(reply)
 

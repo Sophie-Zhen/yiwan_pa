@@ -6,3 +6,4 @@ venv/
 .DS_Store
 data/inbox.md
 data/archive.md
+data/history/

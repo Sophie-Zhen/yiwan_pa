@@ -9,17 +9,26 @@ from abc import ABC, abstractmethod
 
 class LLMBackend(ABC):
     @abstractmethod
-    def chat(self, user_message: str, system_prompt: str = "") -> str:
+    def chat(
+        self,
+        user_message: str,
+        system_prompt: str = "",
+        history: list[dict[str, str]] | None = None,
+    ) -> str:
         """Send a single user message and return the assistant's reply.
-
-        v0.1: each call is stateless — no conversation history is preserved
-        across invocations. Persistent memory lives in the storage layer
-        (markdown files), which the LLM reads/writes via tools.
 
         Args:
             user_message: the raw text the user typed.
             system_prompt: persona / instructions / format spec. If empty,
                 the backend's own default behavior applies (typically a
                 generic coding-assistant persona for shell-out).
+            history: optional conversation history as a list of
+                {"role": "user"|"assistant", "content": str} dicts, oldest
+                first. Backends that support multi-turn use this as the
+                messages prefix; backends without multi-turn support may
+                ignore it. None or empty means stateless (no prior context).
+
+        See docs/decisions/0001-conversation-history.md for the storage
+        layer that produces `history`.
         """
         ...
