@@ -67,3 +67,4 @@ Skip it for:
 |---|---|---|---|
 | 0001 | [Conversation history mechanism](0001-conversation-history.md) | Decided | 2026-04-28 |
 | 0002 | [Pluggable LLM backend abstraction](0002-pluggable-llm-backend.md) | Decided | 2026-04-26 |
+| 0003 | [Self-written agent loop in AnthropicBackend](0003-self-written-agent-loop.md) | Decided | 2026-04-27 |
