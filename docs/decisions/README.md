@@ -66,3 +66,4 @@ Skip it for:
 | # | Title | Status | Date |
 |---|---|---|---|
 | 0001 | [Conversation history mechanism](0001-conversation-history.md) | Decided | 2026-04-28 |
+| 0002 | [Pluggable LLM backend abstraction](0002-pluggable-llm-backend.md) | Decided | 2026-04-26 |

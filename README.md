@@ -76,7 +76,7 @@ That's the thesis underneath this project: **the best personal assistant isn't t
 
 Real design records live in [`docs/decisions/`](docs/decisions/) (ADR format). Highlights:
 
-- [**Pluggable LLM backend abstraction**](docs/decisions/) — dependency-inverted so swapping shell-out for SDK requires no change to the bot. Lets the same code run on a Claude Code subscription (free, dev) or the Anthropic API (paid, prod).
+- [**Pluggable LLM backend abstraction**](docs/decisions/0002-pluggable-llm-backend.md) — dependency-inverted so swapping shell-out for SDK requires no change to the bot. Lets the same code run on a Claude Code subscription (free, dev) or the Anthropic API (paid, prod).
 - [**Self-written agent loop**](docs/decisions/) (`AnthropicBackend`) — instead of using a higher-level agent framework, the loop is hand-built so the harness behavior (tools, retry, prompt caching) is fully owned and inspectable.
 - [**Markdown as the storage**](docs/decisions/) — readable, git-diffable, hand-editable. No DB schema. Storage helpers expose a typed interface anyway, so future migration is non-breaking.
 - [**Conversation history as JSONL with sliding window**](docs/decisions/0001-conversation-history.md) — platform-independent (no PTB-specific persistence), survives container restarts, audit-friendly. Window combines turn count and elapsed time.
