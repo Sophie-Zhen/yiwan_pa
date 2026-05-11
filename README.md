@@ -28,9 +28,9 @@ That's the thesis underneath this project: **the best personal assistant isn't t
 
 ## Demo
 
-[FILL_IN: a screenshot of a Telegram conversation showing capture → digest → completion. Drop the image at `docs/screenshot-chat.png` and reference here:]
+![demo](docs/screenshot-chat.png)
 
-`![demo](docs/screenshot-chat.png)`
+*Bilingual by default — Chinese and English in the same conversation. Say "use English" / "用中文" to switch the bot's reply language.*
 
 ## Architecture
 

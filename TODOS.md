@@ -1,9 +1,9 @@
 # TODOS
 
-_Last updated: 2026-04-29_
+_Last updated: 2026-05-11_
 
 ## Current Focus
-v0.1.1 shipped — bot now keeps a 6-turn / 30-minute conversation history (JSONL per chat). Entering a 2-week dogfooding period: use the bot daily, capture friction in FIELDNOTES.md (gitignored). The 2026-05-12 retro agent will surface what to build next based on actual usage rather than speculation.
+Portfolio polish nearly complete — README rewritten, LICENSE/CHANGELOG added, ADRs 0001-0003 shipped. Two ADR backfills remain (markdown storage, Docker on Pi). Dogfooding period ends tomorrow (2026-05-12) when the scheduled retro agent fires to drive the next-feature decision.
 
 ## Open Questions / Blockers
 - (none currently)
@@ -15,7 +15,5 @@ v0.1.1 shipped — bot now keeps a 6-turn / 30-minute conversation history (JSON
 - [ ] (post-v0.1) Local LLM backend: add `LocalBackend` (Ollama/llama.cpp) targeting the home PC's local Gemma, switchable via env var alongside AnthropicBackend. Privacy story for portfolio — sensitive data never leaves home network. Spike first on capture-only flow to validate Chinese + tool-use reliability before expanding. Constraints: Pi→PC must be on LAN, PC must stay on 24/7.
 - [ ] (post-v0.1) Event log: capture past events (e.g. "今天洗车了") into an `events.md` alongside inbox/archive — timestamp + description — so the user can later ask "上次洗车是啥时候". Reuses the capture pipeline; needs intent disambiguation in the prompt/tools (past event vs. future todo) and a query tool that searches by keyword and returns the most recent match with elapsed time. Naturally pairs with the markdown parser work from per-item reminders.
 - [ ] (post-v0.1) History file rotation: when `data/history/<chat_id>.jsonl` grows past ~10 MB, truncate to last 800 lines on bot startup. Currently unnecessary at expected message rate (years of headroom), but trivially added if scale changes. See ADR 0001.
-- [ ] (portfolio) Rewrite README for an outside reader: motivation, architecture diagram, how to run, current status. Current README assumes the reader is me.
-- [ ] (portfolio) Add LICENSE file (MIT) — GitHub repo → Add file → Choose template → MIT.
-- [ ] (portfolio) Add CHANGELOG.md, record what shipped in v0.1 / v0.1.1, keep updating per version. Strong signal for hiring review alongside commit history.
-- [ ] (portfolio) Backfill ADRs for earlier non-trivial decisions (LLM backend abstraction, AnthropicBackend agent loop, markdown storage, Docker for Pi) — see docs/decisions/README.md format.
+- [ ] (portfolio) Backfill remaining ADRs: 0004 markdown files as storage (vs SQLite/DB) and 0005 Docker for Pi deployment (vs venv+systemd). ADRs 0002 (LLM backend abstraction) and 0003 (self-written agent loop) already shipped.
+- [ ] (portfolio) Add demo screenshot to README — deferred until English fake conversations are created for privacy. Reference path already in README at `docs/screenshot-chat.png`.
