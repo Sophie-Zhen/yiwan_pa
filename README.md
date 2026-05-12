@@ -6,13 +6,13 @@
 
 ## What it does
 
-Send the bot a Telegram message — anything from "记一下明天 9 点 Ryanair 值机" to "今天还有啥要做的" to "Model Y 隐私帘不买了" — and it does the right thing:
+Send the bot a Telegram message — anything from "Flight to London on the 29th, Ryanair, check in 24h before" to "what's on for this week?" to "move the dentist to next Wednesday" — and it does the right thing:
 
 - **Capture** new todos with parsed dates, tags, and notes
 - **Query** what's pending today, this week, or by topic
 - **Update** existing items: change a due date, add notes, mark done, cancel
 - **Push** a daily morning digest summarizing today / upcoming / overdue
-- **Remember context** within a conversation — short follow-ups like "29 号" or "那条改成下周五" resolve to the previous turn
+- **Remember context** within a conversation — short follow-ups like "move that to next Wednesday" resolve to the previous turn
 
 All state lives as plaintext markdown — no database, no vendor lock-in. Your todos are `cat`-able, `git diff`-able, hand-editable.
 
@@ -22,7 +22,7 @@ Some weeks too many plates spin at once: two job-search side projects, a flight 
 
 Phone todo apps weren't fast enough for capture. Each item demanded a manual lift: open the app, type the title, pick a list, set a date, configure a reminder. By the time I'd done that, two more thoughts had escaped.
 
-I wanted a bot I could just *tell*. Send a sentence to Telegram — "29 号下午 Ryanair 飞伦敦,提前在线值机别忘" — and have it figure out the structure, the date, the tags, the right place to put it. Once that primitive existed, the rest of the project followed: a bot that knows your patterns can do far more than capture todos. So why not start from the tiniest possible version, dogfood it daily, and let it grow with how I actually use it?
+I wanted a bot I could just *tell*. Send a sentence to Telegram — "Ryanair flight to London on the 29th — don't forget online check-in" — and have it figure out the structure, the date, the tags, the right place to put it. Once that primitive existed, the rest of the project followed: a bot that knows your patterns can do far more than capture todos. So why not start from the tiniest possible version, dogfood it daily, and let it grow with how I actually use it?
 
 That's the thesis underneath this project: **the best personal assistant isn't the most capable one — it's the one most adapted to its single user.** Heavyweight general-purpose agents (OpenClaw, etc.) are impressive but generic. yiwan_pa is built for one human (me, for now) and aims to evolve toward how that human actually behaves, not the other way around.
 
@@ -169,7 +169,7 @@ yiwan_pa/
 
 **v0.1.1** (current, 2026-04-29) — multi-turn conversation, daily digest, Docker on Pi, two LLM backends. See [CHANGELOG](CHANGELOG.md) for the per-version detail.
 
-**Next up** — driven by real-world usage; tracked in [TODOS.md](TODOS.md). Likely candidates: per-item reminders (T-Nh alerts before flights/meetings), reversal handling, cross-device data sync, an event log for past events ("上次洗车是啥时候"), and a local-LLM backend (Ollama on a home PC) for privacy.
+**Next up** — driven by real-world usage; tracked in [TODOS.md](TODOS.md). Likely candidates: per-item reminders (T-Nh alerts before flights/meetings), reversal handling, cross-device data sync, an event log for past events ("when did I last wash the car"), and a local-LLM backend (Ollama on a home PC) for privacy.
 
 ## License
 
