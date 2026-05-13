@@ -33,6 +33,7 @@ import anthropic
 from storage.markdown import (
     Item,
     append_to_inbox,
+    find_item,
     move_to_archive,
     read_archive,
     read_inbox,
@@ -137,6 +138,20 @@ TOOLS: list[dict[str, Any]] = [
             "required": ["title_substring", "terminal_status"],
         },
     },
+    {
+        "name": "find_item",
+        "description": "Search both inbox AND archive for items whose title contains the given substring (case-insensitive). Use this to verify whether an item exists or to look up its state. Do NOT infer 'item doesn't exist' from read_inbox alone — read_inbox only returns pending items, while completed or cancelled items live in archive. Returns a list of matches, each with location ('inbox' or 'archive') plus the item fields. Empty list means not found in either file.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title_substring": {
+                    "type": "string",
+                    "description": "Substring of the target item's title (case-insensitive).",
+                },
+            },
+            "required": ["title_substring"],
+        },
+    },
 ]
 
 
@@ -155,6 +170,29 @@ def _items_to_payload(items: list[Item]) -> list[dict[str, Any]]:
             if v is not None
         }
         for item in items
+    ]
+
+
+def _matches_to_payload(
+    matches: list[tuple[str, Item]],
+) -> list[dict[str, Any]]:
+    """Serialise find_item matches; each entry carries its location."""
+    return [
+        {
+            "location": loc,
+            **{
+                k: v
+                for k, v in {
+                    "title": item.title,
+                    "due": item.due,
+                    "status": item.status,
+                    "tags": item.tags,
+                    "notes": item.notes,
+                }.items()
+                if v is not None
+            },
+        }
+        for loc, item in matches
     ]
 
 
@@ -196,6 +234,8 @@ def _execute_tool(name: str, args: dict[str, Any]) -> Any:
             "title": moved.title,
             "status": args["terminal_status"],
         }
+    if name == "find_item":
+        return _matches_to_payload(find_item(args["title_substring"]))
     raise ValueError(f"unknown tool: {name!r}")
 
 

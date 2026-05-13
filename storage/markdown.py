@@ -150,3 +150,19 @@ def move_to_archive(
     _write(INBOX_PATH, INBOX_HEADER, remaining)
     _write(ARCHIVE_PATH, ARCHIVE_HEADER, archive)
     return target
+
+
+def find_item(title_substring: str) -> list[tuple[str, Item]]:
+    """Search inbox + archive for items whose title contains `title_substring`
+    (case-insensitive). Returns (location, item) tuples; location is
+    "inbox" or "archive". Empty list = not found in either file.
+    """
+    needle = title_substring.lower()
+    matches: list[tuple[str, Item]] = []
+    for item in read_inbox():
+        if needle in item.title.lower():
+            matches.append(("inbox", item))
+    for item in read_archive():
+        if needle in item.title.lower():
+            matches.append(("archive", item))
+    return matches
