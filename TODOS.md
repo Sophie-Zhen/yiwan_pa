@@ -1,15 +1,18 @@
 # TODOS
 
-_Last updated: 2026-05-11_
+_Last updated: 2026-05-13_
 
 ## Current Focus
-Portfolio polish nearly complete — README rewritten, LICENSE/CHANGELOG added, ADRs 0001-0003 shipped. Two ADR backfills remain (markdown storage, Docker on Pi). Dogfooding period ends tomorrow (2026-05-12) when the scheduled retro agent fires to drive the next-feature decision.
+Post-v0.1 bug-fix phase. Trust bugs 1b + 3 fixed and deployed via `find_item` tool + State checks prompt update (branch `fix/state-check-trust-bugs`, smoke-tested OK on Pi). Bug 1a (dedup) Telegram-history verified — root cause traced to LLM hallucinating `append_to_inbox` after `read_inbox` during capture; today's "no read_inbox during capture" rule likely closes the trigger. Bug 2 (notes silent overwrite) is the only remaining trust bug needing its own fix.
 
 ## Open Questions / Blockers
-- (none currently)
+- Bug 1a recurrence: needs dogfeed observation over next 2-3 weeks. If dedup recurs in inbox.md, backup fix is dispatch-layer same-chat() dedup on `append_to_inbox` (lowercase-substring title match).
 
 ## Todo
-- [ ] (post-v0.1) Per-item reminders: scheduler scans inbox for items whose due times are approaching and pushes per-item alerts (e.g. T-3h, T-2h before a flight). Needs a Python markdown parser in `storage/markdown.py` (already in place).
+- [ ] (post-v0.1) Per-item reminders: scheduler scans inbox for items whose due times are approaching and pushes per-item alerts (e.g. T-3h, T-2h before a flight). Needs a Python markdown parser in `storage/markdown.py` (already in place). Now part of the broader push-strategy-redesign item below.
+- [ ] (post-v0.1) Push strategy redesign: morning digest alone is insufficient (FIELDNOTES 5/5–5/6). Three coordinated push channels needed: (a) per-item T-N alerts for items with specific times — overlaps with the per-item reminders item above; (b) evening overdue digest at user-configurable time, listing today's still-pending items; (c) periodic "stale todo" surfacing for no-due items aged > N days. These three share the same JobQueue scheduler and ought to have a unified `alerted_at` / `last_surfaced_at` schema on items — design together, not piecemeal.
+- [ ] (post-v0.1) List grouping: capture multi-item lists (购物清单 / 行李清单) as a single inbox item with checkable sub-items, not N separate entries. Needs storage schema extension (e.g. `children` field on `Item`, or a new `ListItem` type), prompt instruction to recognise list intent during capture, and a sub-item-completion tool. Surfaced from dogfeed — 10 件购物 = 10 inbox lines was unmanageable.
+- [ ] (post-v0.1) `/todos` command + digest interactivity: on-demand display of all pending items including no-due-date ones (current `/digest` only renders today's morning-digest format and misses no-due items). After completing items during the day, user should be able to re-render the remaining list without restating the request. FIELDNOTES 4/29 #missing — Sophie observed needing to "不停 trigger digest" to track remaining work.
 - [ ] (post-v0.1) Handle reversal scenarios: when the user reverses a recent decision (e.g. cancelled "Model Y curtain" then "I bought it" — meaning Model Y), AnthropicBackend currently does not infer the reference (Opus 4.7 follows the prompt literally; Claude Code explores files more broadly). Prefer fixing via a combined `find_item` tool that searches both inbox and archive — keeps the system prompt lean instead of growing it with edge cases.
 - [ ] (post-v0.1) Cross-device data sync: inbox.md / archive.md / history/ currently live only on whichever device the bot runs on. Simplest scheme — periodic git commit/push to a separate private data repo from Pi, optional pull from Mac for read-only viewing. Adds version history as a side benefit.
 - [ ] (post-v0.1) Local LLM backend: add `LocalBackend` (Ollama/llama.cpp) targeting the home PC's local Gemma, switchable via env var alongside AnthropicBackend. Privacy story for portfolio — sensitive data never leaves home network. Spike first on capture-only flow to validate Chinese + tool-use reliability before expanding. Constraints: Pi→PC must be on LAN, PC must stay on 24/7.
