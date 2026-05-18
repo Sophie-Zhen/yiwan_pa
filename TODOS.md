@@ -1,12 +1,13 @@
 # TODOS
 
-_Last updated: 2026-05-13_
+_Last updated: 2026-05-18_
 
 ## Current Focus
-Post-v0.1 bug-fix phase. Trust bugs 1b + 3 fixed and deployed via `find_item` tool + State checks prompt update (branch `fix/state-check-trust-bugs`, smoke-tested OK on Pi). Bug 1a (dedup) Telegram-history verified — root cause traced to LLM hallucinating `append_to_inbox` after `read_inbox` during capture; today's "no read_inbox during capture" rule likely closes the trigger. Bug 2 (notes silent overwrite) is the only remaining trust bug needing its own fix.
+Push strategy redesign — three coordinated channels (evening digest + stale-todo surfacing + per-item T-N alerts) sharing JobQueue + an `alerted_at` schema. Trust bug phase closed: Bug 2 (notes silent overwrite) shipped today via `append_to_notes` tool (commit `0507fbe`); 1b/3 closed a week ago via `find_item`; 1a observation continues but capture-no-read rule appears to have closed the trigger. Multi-step project feature also shipped 5/18 (commit `b190f9e`).
 
 ## Open Questions / Blockers
-- Bug 1a recurrence: needs dogfeed observation over next 2-3 weeks. If dedup recurs in inbox.md, backup fix is dispatch-layer same-chat() dedup on `append_to_inbox` (lowercase-substring title match).
+- Bug 1a recurrence: continue dogfeed observation. If dedup recurs in inbox.md, backup fix is dispatch-layer same-chat() dedup on `append_to_inbox` (lowercase-substring title match).
+- Push strategy `alerted_at` schema: per-item field(s) on `Item` vs. separate sidecar file — design call to make before coding. Trade-off is item-locality vs. avoiding inbox.md churn on every alert.
 
 ## Todo
 - [ ] (post-v0.1) Per-item reminders: scheduler scans inbox for items whose due times are approaching and pushes per-item alerts (e.g. T-3h, T-2h before a flight). Needs a Python markdown parser in `storage/markdown.py` (already in place). Now part of the broader push-strategy-redesign item below.
