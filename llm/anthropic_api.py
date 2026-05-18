@@ -26,17 +26,19 @@ Notes on configuration:
 import json
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 import anthropic
 
 from storage.markdown import (
+    TERMINAL_STATUSES,
     Item,
     append_to_inbox,
     find_item,
     move_to_archive,
     read_archive,
     read_inbox,
+    set_item_status,
     update_inbox_item,
 )
 
@@ -72,13 +74,27 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "append_to_inbox",
-        "description": "Add a new pending item to the top of the inbox. Use this when the user describes a new task or commitment.",
+        "description": "Add a new pending item to the top of the inbox. Use this for: (a) a standalone task — leave type/mode/project unset; (b) a multi-step project — set type='project' and mode ('sequential' = steps must be done in order, 'parallel' = any order); (c) a step belonging to an existing project — set project=<that project's title>. Steps of a project should be appended in the order they will be executed (the storage order is the execution order).",
         "input_schema": {
             "type": "object",
             "properties": {
                 "title": {
                     "type": "string",
                     "description": "Short title summarising the item.",
+                },
+                "type": {
+                    "type": "string",
+                    "enum": ["project"],
+                    "description": "Set to 'project' when creating a multi-step project record. Omit for ordinary todos and for steps belonging to a project.",
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["sequential", "parallel"],
+                    "description": "Required when type='project'. 'sequential' = steps must progress in order (only one in_progress at a time). 'parallel' = steps may proceed in any order.",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "When this item is a step of a project, set this to the parent project's title. Do not set when creating the project itself or a standalone item.",
                 },
                 "due": {
                     "type": "string",
@@ -98,7 +114,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "update_inbox_item",
-        "description": "Update one field of an existing inbox item. The item is matched by the first whose title contains title_substring (case-insensitive). Use this for modifications such as changing the due date or tags.",
+        "description": "Update one non-status field of an existing inbox item. The item is matched by the first whose title contains title_substring (case-insensitive). Use this for modifications such as changing the due date, title, tags, or notes. For status changes use the set_status tool — this tool will refuse status updates.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -108,8 +124,8 @@ TOOLS: list[dict[str, Any]] = [
                 },
                 "field": {
                     "type": "string",
-                    "enum": ["title", "due", "status", "tags", "notes"],
-                    "description": "Which field to update.",
+                    "enum": ["title", "due", "tags", "notes"],
+                    "description": "Which field to update. Status is intentionally excluded — use set_status.",
                 },
                 "value": {
                     "type": "string",
@@ -117,25 +133,6 @@ TOOLS: list[dict[str, Any]] = [
                 },
             },
             "required": ["title_substring", "field", "value"],
-        },
-    },
-    {
-        "name": "move_to_archive",
-        "description": "Move an item from inbox to archive with a terminal status. The item is matched by the first whose title contains title_substring (case-insensitive). Use this when the user marks something done or cancelled.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "title_substring": {
-                    "type": "string",
-                    "description": "Substring of the target item's title (case-insensitive).",
-                },
-                "terminal_status": {
-                    "type": "string",
-                    "enum": ["done", "cancelled"],
-                    "description": "Terminal status to record on the moved item.",
-                },
-            },
-            "required": ["title_substring", "terminal_status"],
         },
     },
     {
@@ -152,48 +149,57 @@ TOOLS: list[dict[str, Any]] = [
             "required": ["title_substring"],
         },
     },
+    {
+        "name": "set_status",
+        "description": "Change an inbox item's status. This is the only tool that may change status. Allowed values: 'pending' (not yet started), 'in_progress' (currently being worked on), 'done' (completed), 'cancelled' (abandoned). Behaviour: (a) terminal statuses (done / cancelled) also move the item to archive.md — no separate archive call needed; (b) when transitioning a step to in_progress, if its parent project's mode is 'sequential', the tool refuses if another step in the same project is already in_progress (only one step at a time in a sequential project). When that happens, ask the user whether to finish or pause the blocking step first.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title_substring": {
+                    "type": "string",
+                    "description": "Substring of the target item's title (case-insensitive).",
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["pending", "in_progress", "done", "cancelled"],
+                    "description": "New status for the item.",
+                },
+            },
+            "required": ["title_substring", "status"],
+        },
+    },
 ]
+
+
+def _item_payload(item: Item) -> dict[str, Any]:
+    """Compact serialisation for a single Item — drops empty fields. Used by
+    list and find serialisers below."""
+    return {
+        k: v
+        for k, v in {
+            "title": item.title,
+            "type": item.type,
+            "mode": item.mode,
+            "project": item.project,
+            "due": item.due,
+            "status": item.status,
+            "tags": item.tags,
+            "notes": item.notes,
+        }.items()
+        if v is not None
+    }
 
 
 def _items_to_payload(items: list[Item]) -> list[dict[str, Any]]:
     """Compact serialisation for tool_result content — drops empty fields."""
-    return [
-        {
-            k: v
-            for k, v in {
-                "title": item.title,
-                "due": item.due,
-                "status": item.status,
-                "tags": item.tags,
-                "notes": item.notes,
-            }.items()
-            if v is not None
-        }
-        for item in items
-    ]
+    return [_item_payload(item) for item in items]
 
 
 def _matches_to_payload(
     matches: list[tuple[str, Item]],
 ) -> list[dict[str, Any]]:
     """Serialise find_item matches; each entry carries its location."""
-    return [
-        {
-            "location": loc,
-            **{
-                k: v
-                for k, v in {
-                    "title": item.title,
-                    "due": item.due,
-                    "status": item.status,
-                    "tags": item.tags,
-                    "notes": item.notes,
-                }.items()
-                if v is not None
-            },
-        }
-        for loc, item in matches
-    ]
+    return [{"location": loc, **_item_payload(item)} for loc, item in matches]
 
 
 def _execute_tool(name: str, args: dict[str, Any]) -> Any:
@@ -207,6 +213,9 @@ def _execute_tool(name: str, args: dict[str, Any]) -> Any:
             title=args["title"],
             created=datetime.now().strftime("%Y-%m-%d %H:%M"),
             status="pending",
+            type=args.get("type"),
+            mode=args.get("mode"),
+            project=args.get("project"),
             due=args.get("due"),
             tags=args.get("tags"),
             notes=args.get("notes"),
@@ -225,18 +234,78 @@ def _execute_tool(name: str, args: dict[str, Any]) -> Any:
             "field": args["field"],
             "value": args["value"],
         }
-    if name == "move_to_archive":
-        moved = move_to_archive(args["title_substring"], args["terminal_status"])
+    if name == "find_item":
+        return _matches_to_payload(find_item(args["title_substring"]))
+    if name == "set_status":
+        return _execute_set_status(args["title_substring"], args["status"])
+    raise ValueError(f"unknown tool: {name!r}")
+
+
+def _execute_set_status(title_substring: str, new_status: str) -> dict[str, Any]:
+    """Dispatch for the set_status tool. Resolves the target item, enforces
+    the sequential-project in_progress invariant, then either writes the
+    new status in place (non-terminal) or moves the item to archive
+    (terminal). Returns a JSON-friendly dict for the tool_result.
+    """
+    # Resolve the target. We search both inbox and archive so we can give a
+    # useful error if the item is already archived (status changes only make
+    # sense on inbox items).
+    matches = find_item(title_substring)
+    if not matches:
+        return {"ok": False, "reason": "no item matched"}
+    target: Optional[Item] = None
+    for loc, item in matches:
+        if loc == "inbox":
+            target = item
+            break
+    if target is None:
+        return {
+            "ok": False,
+            "reason": "item is in archive, not inbox — cannot change its status",
+        }
+
+    # Sequential-project invariant: only one in_progress step per project.
+    if new_status == "in_progress" and target.project:
+        project_record: Optional[Item] = None
+        for _loc, it in find_item(target.project):
+            if it.type == "project" and it.title == target.project:
+                project_record = it
+                break
+        if project_record and project_record.mode == "sequential":
+            siblings_in_progress = [
+                it
+                for it in read_inbox()
+                if it.project == target.project
+                and it.status == "in_progress"
+                and it.title != target.title
+            ]
+            if siblings_in_progress:
+                blocker = siblings_in_progress[0]
+                return {
+                    "ok": False,
+                    "reason": (
+                        f"sequential project '{target.project}' already has an "
+                        f"in_progress step: '{blocker.title}'. Finish or pause "
+                        "that step before starting another."
+                    ),
+                }
+
+    # Apply the change. Terminal statuses go through move_to_archive so the
+    # item physically moves; non-terminal stays in inbox.
+    if new_status in TERMINAL_STATUSES:
+        moved = move_to_archive(target.title, new_status)
         if moved is None:
-            return {"ok": False, "reason": "no item matched"}
+            return {"ok": False, "reason": "no item matched on move"}
         return {
             "ok": True,
             "title": moved.title,
-            "status": args["terminal_status"],
+            "status": new_status,
+            "moved_to_archive": True,
         }
-    if name == "find_item":
-        return _matches_to_payload(find_item(args["title_substring"]))
-    raise ValueError(f"unknown tool: {name!r}")
+    updated = set_item_status(target.title, new_status)
+    if updated is None:
+        return {"ok": False, "reason": "no item matched on set"}
+    return {"ok": True, "title": updated.title, "status": new_status}
 
 
 def _extract_text(content: list[Any]) -> str:

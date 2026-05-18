@@ -17,9 +17,14 @@ DATA_DIR = pathlib.Path(__file__).resolve().parent.parent / "data"
 INBOX_PATH = DATA_DIR / "inbox.md"
 ARCHIVE_PATH = DATA_DIR / "archive.md"
 
-VALID_STATUSES = {"pending", "done", "cancelled"}
+VALID_STATUSES = {"pending", "in_progress", "done", "cancelled"}
 TERMINAL_STATUSES = {"done", "cancelled"}
-UPDATABLE_FIELDS = {"title", "due", "status", "tags", "notes"}
+VALID_TYPES = {None, "project"}
+VALID_MODES = {None, "sequential", "parallel"}
+# Status removed: status changes go through set_item_status / move_to_archive,
+# not the general update path, so the in_progress invariant is enforced.
+# Type / mode / project also not here — they're set at creation, not edited.
+UPDATABLE_FIELDS = {"title", "due", "tags", "notes"}
 
 INBOX_HEADER = "# Inbox\n\nActive todos. New items appended at the top.\n\n---\n"
 ARCHIVE_HEADER = "# Archive\n\nCompleted and cancelled items. Most recent first.\n\n---\n"
@@ -32,12 +37,40 @@ class Item:
     title: str
     created: str
     status: str = "pending"
+    # Project / step extension fields. type="project" marks a Project record;
+    # mode is required on projects (sequential | parallel). project=<name>
+    # marks a step belonging to that project. See data/README.md for the spec.
+    type: Optional[str] = None
+    mode: Optional[str] = None
+    project: Optional[str] = None
     due: Optional[str] = None
     tags: Optional[str] = None
     notes: Optional[str] = None
 
+    def __post_init__(self) -> None:
+        if self.status not in VALID_STATUSES:
+            raise ValueError(f"invalid status: {self.status!r}")
+        if self.type not in VALID_TYPES:
+            raise ValueError(f"invalid type: {self.type!r}")
+        if self.mode not in VALID_MODES:
+            raise ValueError(f"invalid mode: {self.mode!r}")
+        if self.type == "project":
+            if self.mode is None:
+                raise ValueError("project record must have mode")
+            if self.project is not None:
+                raise ValueError("project record cannot have a project field")
+        else:
+            if self.mode is not None:
+                raise ValueError("non-project item cannot have mode")
+
     def to_markdown(self) -> str:
         lines = [f"## {self.title}", f"- created: {self.created}"]
+        if self.type:
+            lines.append(f"- type: {self.type}")
+        if self.mode:
+            lines.append(f"- mode: {self.mode}")
+        if self.project:
+            lines.append(f"- project: {self.project}")
         if self.due:
             lines.append(f"- due: {self.due}")
         lines.append(f"- status: {self.status}")
@@ -67,6 +100,9 @@ def _parse(content: str) -> list[Item]:
                 title=title,
                 created=fields.get("created", ""),
                 status=fields.get("status", "pending"),
+                type=fields.get("type"),
+                mode=fields.get("mode"),
+                project=fields.get("project"),
                 due=fields.get("due"),
                 tags=fields.get("tags"),
                 notes=fields.get("notes"),
@@ -166,3 +202,22 @@ def find_item(title_substring: str) -> list[tuple[str, Item]]:
         if needle in item.title.lower():
             matches.append(("archive", item))
     return matches
+
+
+def set_item_status(title_substring: str, new_status: str) -> Optional[Item]:
+    """Change the status of the first matching inbox item. The in_progress
+    invariant (sequential project: at most one in_progress step) is enforced
+    by the caller (the set_status tool), not here — this helper only writes
+    the new value. Terminal statuses should go through move_to_archive, not
+    here, since they also move the item to archive.md.
+    """
+    if new_status not in VALID_STATUSES:
+        raise ValueError(f"invalid status: {new_status!r}")
+    items = read_inbox()
+    needle = title_substring.lower()
+    for item in items:
+        if needle in item.title.lower():
+            item.status = new_status
+            _write(INBOX_PATH, INBOX_HEADER, items)
+            return item
+    return None

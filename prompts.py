@@ -24,8 +24,11 @@ Each todo is a level-2 markdown heading followed by a list of fields:
 
     ## <short title>
     - created: YYYY-MM-DD HH:MM
+    - type: project (only for multi-step project records — omit for standalone todos and steps)
+    - mode: sequential | parallel (required when type=project, omit otherwise)
+    - project: <parent project title> (set on each step belonging to a project)
     - due: YYYY-MM-DD or YYYY-MM-DD HH:MM (optional)
-    - status: pending | done | cancelled
+    - status: pending | in_progress | done | cancelled
     - tags: space-separated #category or #category/sub (optional)
     - notes: free-form context (optional)
 
@@ -41,13 +44,35 @@ Decide which action the message implies, then act:
 2. **Query** — user asks what's pending or about specific items.
    Read data/inbox.md and reply with a filtered/sorted view answering the question. Don't dump the whole file.
 
-3. **Complete / cancel** — user says something is done or no longer needed.
-   Find the matching item in data/inbox.md, change its status to `done` or `cancelled`, and move the entire item (with all fields preserved) to data/archive.md. Reply with confirmation.
+3. **Status change (start / complete / cancel)** — user says they are starting an item, finishing it, or abandoning it.
+   Call `set_status` with the new value (`in_progress`, `done`, or `cancelled`). For terminal statuses (done / cancelled) the tool also moves the item to data/archive.md — no separate archive step needed. Status changes never go through `update_inbox_item`. Reply with confirmation.
 
-4. **Modify** — user is updating a detail (date, notes, etc.) of an existing item.
-   Edit the relevant field in place in data/inbox.md. Reply with confirmation.
+4. **Modify other fields** — user is updating the title, due date, tags, or notes of an existing item.
+   Call `update_inbox_item`. Status changes are intentionally excluded from this tool — use `set_status` instead. Reply with confirmation.
 
 If a message is genuinely ambiguous between two actions, ask one short clarifying question instead of guessing.
+
+## Projects (multi-step plans)
+
+Some commitments are inherently multi-step ("paint the room" = sand → prime → paint → second coat; "plan the trip" = book flight → book hotel → buy insurance). When the message implies several ordered or related steps, model it as a Project plus Steps instead of one flat item:
+
+1. **Create the project record**: `append_to_inbox` with `type='project'` and a `mode`:
+   - `sequential` — strict order; only one step may be `in_progress` at a time (enforced by `set_status`).
+   - `parallel` — any order; multiple steps may be `in_progress` concurrently.
+2. **Create each step**: `append_to_inbox` with `project=<that project's title>`. Do not set `type` or `mode` on a step. Each step has its own `due`, `notes`, `status`.
+
+Status changes on a project or any of its steps always go through `set_status` (same as other items). If `set_status(step, in_progress)` returns an error like "sequential project X already has an in_progress step Y", ask the user whether to finish or pause Y first.
+
+### Project lifecycle — always confirm before cascading
+
+- **All steps complete**: when `set_status` on the last pending step of a project succeeds, ask the user before archiving the project (e.g. "刷漆 的所有 step 已完成，归档项目吗？" — match the user's language). On confirmation, `set_status(project, done)`.
+- **User cancels a project**: before cascading, count its pending and in_progress steps and ask once ("这会 cancel N 个未完成 step，确认吗？"). On confirmation, call `set_status(project, cancelled)` then `set_status(each pending/in_progress step, cancelled)`.
+
+Never auto-cascade without confirmation. Cancel is not easily reversible; a wrong auto-cascade is a worse failure than one extra question.
+
+### When NOT to model as a project
+
+A single discrete task ("买桶装水", "回邮件给 Mark") is a standalone item — do not create a project for it. Heuristic: would the user naturally ask "which step am I on?" If no, it's a flat todo.
 
 ## State checks (important)
 
