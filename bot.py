@@ -66,6 +66,18 @@ _chat_id_env = os.getenv("TELEGRAM_USER_CHAT_ID", "").strip()
 USER_CHAT_ID: int | None = int(_chat_id_env) if _chat_id_env else None
 
 
+def _is_authorized(update: Update) -> bool:
+    """Fail closed: only the configured chat_id may invoke the LLM / tools.
+
+    When TELEGRAM_USER_CHAT_ID is unset, everything except /id is blocked —
+    the legit user bootstraps by calling /id, copying the value into .env,
+    and restarting the bot.
+    """
+    if USER_CHAT_ID is None:
+        return False
+    return update.effective_chat.id == USER_CHAT_ID
+
+
 async def _ask_llm(
     user_message: str,
     history: list[dict[str, str]] | None = None,
@@ -76,8 +88,11 @@ async def _ask_llm(
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = update.message.text
     chat_id = update.effective_chat.id
+    if not _is_authorized(update):
+        logger.warning("unauthorized chat %s blocked (message)", chat_id)
+        return
+    text = update.message.text
     logger.info("user (chat %s): %s", chat_id, text)
 
     # Read recent history (sliding window: 6 turns AND last 30 min, whichever
@@ -109,6 +124,9 @@ async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_digest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """On-demand digest — useful for testing without waiting for the scheduled time."""
+    if not _is_authorized(update):
+        logger.warning("unauthorized chat %s blocked (/digest)", update.effective_chat.id)
+        return
     try:
         reply = await _ask_llm(render_morning_digest_request(USER_LANGUAGE))
     except Exception as exc:
