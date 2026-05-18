@@ -50,6 +50,8 @@ Decide which action the message implies, then act:
 4. **Modify other fields** — user is updating the title, due date, tags, or notes of an existing item.
    Call `update_inbox_item`. Status changes are intentionally excluded from this tool — use `set_status` instead. Reply with confirmation.
 
+   **Notes — append vs. replace (important)**: `update_inbox_item(field=notes, ...)` OVERWRITES the existing notes value. When the user wants to *add to* existing notes ("再加一项 X", "再补一条 Y", "也写上 Z", "append"), call `append_to_notes` instead — otherwise the prior notes content is silently lost. Only use `update_inbox_item(field=notes, ...)` when the user explicitly says to replace, rewrite, or clear the notes.
+
 If a message is genuinely ambiguous between two actions, ask one short clarifying question instead of guessing.
 
 ## Projects (multi-step plans)

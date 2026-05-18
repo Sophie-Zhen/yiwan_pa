@@ -34,6 +34,7 @@ from storage.markdown import (
     TERMINAL_STATUSES,
     Item,
     append_to_inbox,
+    append_to_notes,
     find_item,
     move_to_archive,
     read_archive,
@@ -114,7 +115,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "update_inbox_item",
-        "description": "Update one non-status field of an existing inbox item. The item is matched by the first whose title contains title_substring (case-insensitive). Use this for modifications such as changing the due date, title, tags, or notes. For status changes use the set_status tool — this tool will refuse status updates.",
+        "description": "Update one non-status field of an existing inbox item, REPLACING the field's current value. The item is matched by the first whose title contains title_substring (case-insensitive). Use this for modifications such as changing the due date, title, tags, or rewriting the notes from scratch. For status changes use the set_status tool — this tool will refuse status updates. IMPORTANT — notes is overwrite-only: if the user wants to ADD to existing notes ('再加一项', '再补一条', 'append') rather than replace them, call append_to_notes instead; using this tool with field=notes would silently discard the existing notes value.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -129,10 +130,28 @@ TOOLS: list[dict[str, Any]] = [
                 },
                 "value": {
                     "type": "string",
-                    "description": "New value for the field.",
+                    "description": "New value for the field. REPLACES the existing value — does not append.",
                 },
             },
             "required": ["title_substring", "field", "value"],
+        },
+    },
+    {
+        "name": "append_to_notes",
+        "description": "Append a line to an inbox item's notes WITHOUT overwriting the existing content. Use this whenever the user wants to add to / extend / supplement existing notes ('再加一项 X', '再补一条 Y', 'also note Z', 'append'). If the item already has notes, the new value is joined with '; '; if notes was empty, value becomes the new notes. Use update_inbox_item with field=notes only when the user explicitly says to replace or rewrite the entire notes.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title_substring": {
+                    "type": "string",
+                    "description": "Substring of the target item's title (case-insensitive).",
+                },
+                "value": {
+                    "type": "string",
+                    "description": "Text to append. Will be joined with the existing notes by '; ' if notes already has content.",
+                },
+            },
+            "required": ["title_substring", "value"],
         },
     },
     {
@@ -233,6 +252,15 @@ def _execute_tool(name: str, args: dict[str, Any]) -> Any:
             "title": updated.title,
             "field": args["field"],
             "value": args["value"],
+        }
+    if name == "append_to_notes":
+        updated = append_to_notes(args["title_substring"], args["value"])
+        if updated is None:
+            return {"ok": False, "reason": "no item matched"}
+        return {
+            "ok": True,
+            "title": updated.title,
+            "notes": updated.notes,
         }
     if name == "find_item":
         return _matches_to_payload(find_item(args["title_substring"]))

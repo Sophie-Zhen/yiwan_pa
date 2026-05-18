@@ -204,6 +204,26 @@ def find_item(title_substring: str) -> list[tuple[str, Item]]:
     return matches
 
 
+def append_to_notes(title_substring: str, value: str) -> Optional[Item]:
+    """Append text to an inbox item's notes field without overwriting the old
+    value. Joins with "; " when notes already has content. notes is a single
+    markdown line — newlines won't round-trip through _parse, so we deliberately
+    keep the result one-line. Returns the updated item, or None if no item
+    matched.
+    """
+    items = read_inbox()
+    needle = title_substring.lower()
+    for item in items:
+        if needle in item.title.lower():
+            if item.notes:
+                item.notes = f"{item.notes}; {value}"
+            else:
+                item.notes = value
+            _write(INBOX_PATH, INBOX_HEADER, items)
+            return item
+    return None
+
+
 def set_item_status(title_substring: str, new_status: str) -> Optional[Item]:
     """Change the status of the first matching inbox item. The in_progress
     invariant (sequential project: at most one in_progress step) is enforced
