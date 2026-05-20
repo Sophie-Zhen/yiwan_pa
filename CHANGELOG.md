@@ -6,6 +6,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- **Multi-step projects** (commit `b190f9e`) — items with `type: project` and a `mode` (`sequential` or `parallel`), plus their steps linked via `project: <parent title>`. `sequential` projects enforce "only one step `in_progress` at a time" via the `set_status` tool. The bot asks before cascading on project completion or cancellation. Format spec in [data/README.md](data/README.md).
+- **Per-item T-N push alerts** (commit `44a0ed3`) — at capture the user can declare offsets ("提前 3h 2h 提醒" → `alerts: 180,120`); a per-minute scan loop in `scheduler.py` fires reminders as each offset's window arrives. Missed offsets (bot offline / restart) coalesce into a single late-alert message that asks whether to skip the remaining pushes.
+- **Evening digest** (commit `44a0ed3`) — daily check-in at `EVENING_DIGEST_TIME` (default 21:00) listing today's still-pending + overdue items. Empty list → push suppressed (silence is the desired output).
+- **Morning digest "Stale" section** (commit `44a0ed3`) — items with no due date that haven't been surfaced in >7 days appear as a fourth section. Mark-on-send-success: a failed push re-surfaces the items the next morning rather than silently disappearing.
+- **`find_item` tool** (commit `f70f485`) — searches both `inbox.md` and `archive.md`. Closes two trust bugs from v0.1.1 dogfeed where the bot saying "no such item" based on inbox alone overlooked the archived copy.
+- **`append_to_notes` tool** (commit `0507fbe`) — appends to existing notes without overwriting. `update_inbox_item(field=notes, ...)` keeps overwrite semantics and its description now warns to use `append_to_notes` for additive intent.
+- **`skip_remaining_alerts` tool** (commit `44a0ed3`) — cancels the remaining T-N pushes for an item (e.g. when the user replies "skip flight" to a late alert) without losing the declared `alerts` configuration.
+
+### Changed
+
+- **`set_status` is now the only tool that may change status** (commit `b190f9e`). `update_inbox_item.field` no longer accepts `"status"`; status transitions to `done` / `cancelled` also move the item to archive in one step, removing the prior separate `move_to_archive` tool.
+- **Telegram whitelist hardened** (commit `c4e1f9b`) — bot only responds to messages from `TELEGRAM_USER_CHAT_ID`; other chats are silently dropped at the handler entry point.
+
+### Fixed
+
+- **Self-contradiction bug** (FIELDNOTES 4/30): bot confirmed an item archived, then five minutes later denied it existed because it re-read inbox during a later capture and read "not in inbox" as "never existed". Closed by `find_item` + a "State checks" section in the system prompt that says: prior confirmations are evidence the item exists; `find_item` before retracting.
+- **Silent notes overwrite** (FIELDNOTES 4/30): "再加一项 X" caused `update_inbox_item(field=notes, ...)` to clobber prior notes. Closed by `append_to_notes` (read-then-write, joins with `; `).
+- **Archive trust** (FIELDNOTES 4/29): bot claimed an item was archived when in fact it wasn't. Same root-cause family as the self-contradiction bug; `find_item` + State checks close it.
+
 ## [0.1.1] — 2026-04-29
 
 ### Added

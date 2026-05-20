@@ -11,7 +11,8 @@ Send the bot a Telegram message — anything from "Flight to London on the 29th,
 - **Capture** new todos with parsed dates, tags, and notes
 - **Query** what's pending today, this week, or by topic
 - **Update** existing items: change a due date, add notes, mark done, cancel
-- **Push** a daily morning digest summarizing today / upcoming / overdue
+- **Plan multi-step work** as a *project* with ordered (`sequential`) or unordered (`parallel`) steps; bot tracks which step is current and which is blocked
+- **Push** scheduled reminders: morning digest (today / upcoming / overdue / stale items with no due), evening check-in at 21:00 for today's still-pending, and per-item T-N alerts before time-sensitive items ("flight 提前 3h 2h 提醒")
 - **Remember context** within a conversation — short follow-ups like "move that to next Wednesday" resolve to the previous turn
 
 All state lives as plaintext markdown — no database, no vendor lock-in. Your todos are `cat`-able, `git diff`-able, hand-editable.
@@ -65,12 +66,13 @@ That's the thesis underneath this project: **the best personal assistant isn't t
 
 **Key parts:**
 
-- **`bot.py`** — `python-telegram-bot` long-poll loop, command + message handlers, daily JobQueue task for the morning digest, conversation-history glue.
+- **`bot.py`** — `python-telegram-bot` long-poll loop, command + message handlers, daily JobQueue tasks for the morning + evening digests, conversation-history glue. Whitelists `TELEGRAM_USER_CHAT_ID` so the bot only responds to its owner.
+- **`scheduler.py`** — per-minute scan loop for per-item T-N push alerts. Reads `data/inbox.md` each tick, partitions un-fired declared offsets into normal vs. late, sends + records to the item's `alerted` field on the next pass.
 - **`llm/`** — `LLMBackend` interface plus two implementations (selected by `LLM_BACKEND` env var). The abstraction is real: each backend handles auth, agent looping, and tool execution differently, but the bot doesn't know.
-- **`llm/anthropic_api.py`** — a self-written agent loop on top of the `anthropic` SDK. Five tools (`read_inbox`, `read_archive`, `append_to_inbox`, `update_inbox_item`, `move_to_archive`), top-level prompt caching, adaptive thinking, typed exception handling. ~200 lines.
+- **`llm/anthropic_api.py`** — a self-written agent loop on top of the `anthropic` SDK. Eight tools (`read_inbox`, `read_archive`, `append_to_inbox`, `update_inbox_item`, `append_to_notes`, `find_item`, `skip_remaining_alerts`, `set_status`), top-level prompt caching, adaptive thinking, typed exception handling.
 - **`storage/markdown.py`** — typed parser/writer for `data/inbox.md` and `data/archive.md`. Each item is a level-2 markdown heading with `key: value` fields; format spec in `data/README.md`.
 - **`storage/history.py`** — per-chat conversation history as JSONL with a sliding window (6 turns OR 30 minutes, whichever is shorter).
-- **`prompts.py`** — system prompt for the assistant role, plus a canned digest request for scheduled pushes.
+- **`prompts.py`** — system prompt for the assistant role, plus canned digest requests (morning + evening) for scheduled pushes.
 
 ## Notable engineering decisions
 
@@ -135,14 +137,16 @@ All config is environment variables in `.env`. See `.env.example` for the full l
 | `ANTHROPIC_API_KEY` | if using `anthropic` | API auth |
 | `USER_NAME` | yes | Used in the assistant's system prompt |
 | `TZ` | yes | IANA timezone — drives container clock and digest scheduling |
-| `DIGEST_TIME` | no, default `08:30` | Local-time HH:MM for the daily digest |
-| `TELEGRAM_USER_CHAT_ID` | needed for scheduled push | Where the digest is delivered |
+| `DIGEST_TIME` | no, default `08:30` | Local-time HH:MM for the morning digest |
+| `EVENING_DIGEST_TIME` | no, default `21:00` | Local-time HH:MM for the evening check-in |
+| `TELEGRAM_USER_CHAT_ID` | needed for scheduled push **and for the whitelist** | Only this chat may message the bot; also where digests + T-N alerts are delivered |
 
 ## Project structure
 
 ```
 yiwan_pa/
 ├── bot.py                       # entry point
+├── scheduler.py                 # per-minute T-N alert scan loop
 ├── llm/                         # LLM backend abstraction
 │   ├── base.py                  # LLMBackend interface
 │   ├── claude_code.py           # subprocess to `claude` CLI
@@ -167,9 +171,11 @@ yiwan_pa/
 
 ## Status & roadmap
 
-**v0.1.1** (current, 2026-04-29) — multi-turn conversation, daily digest, Docker on Pi, two LLM backends. See [CHANGELOG](CHANGELOG.md) for the per-version detail.
+**v0.1.1** (last tagged, 2026-04-29) — multi-turn conversation, daily digest, Docker on Pi, two LLM backends. See [CHANGELOG](CHANGELOG.md) for the per-version detail.
 
-**Next up** — driven by real-world usage; tracked in [TODOS.md](TODOS.md). Likely candidates: per-item reminders (T-Nh alerts before flights/meetings), reversal handling, cross-device data sync, an event log for past events ("when did I last wash the car"), and a local-LLM backend (Ollama on a home PC) for privacy.
+**Since v0.1.1** (deployed, not yet tagged) — multi-step projects, per-item T-N push alerts, evening digest, stale-item surfacing in the morning digest, `find_item` + `append_to_notes` trust fixes, Telegram whitelist hardening.
+
+**Next up** — driven by real-world usage; tracked in [TODOS.md](TODOS.md). Likely candidates: list grouping (购物清单 as one item with sub-checkable entries), `/todos` on-demand display, reversal handling, cross-device data sync, an event log for past events ("when did I last wash the car"), and a local-LLM backend (Ollama on a home PC) for privacy.
 
 ## License
 
