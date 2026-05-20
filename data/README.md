@@ -34,6 +34,14 @@ Each todo is a level-2 markdown heading followed by a list of fields:
 - `mode` — required when `type: project`. One of `sequential` (only one step in_progress at a time, ordered) or `parallel` (any order, multiple in_progress allowed).
 - `project` — set on each step belonging to a project. The value is the parent project's title. Don't set on standalone items or on project records themselves.
 
+### Scheduler-internal fields (don't hand-edit)
+
+These three are managed by the bot's push scheduler. They round-trip through the parser but the bot will rewrite them; manual edits are likely to be overwritten or to break the in-progress invariants.
+
+- `alerts` — comma-separated minutes-before-due offsets the user requested as push reminders (e.g. `180,120` = T-3h and T-2h). Set at capture time by the LLM when the user explicitly asks for advance reminders. Only meaningful for items with HH:MM-precision `due`.
+- `alerted` — subset of `alerts` whose push has already been delivered. Updated by the scheduler after each successful send. Always a subset of `alerts`.
+- `alerted_stale` — timestamp (`YYYY-MM-DD HH:MM`) of the last time this item appeared in the morning digest's stale section. Used to throttle re-surfacing of no-due todos (re-surface every 7 days max).
+
 ## Multi-step projects
 
 Some commitments span several ordered or related steps. Store the parent as a project record and each step as its own item that references the project:

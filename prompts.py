@@ -6,6 +6,7 @@ language the user wrote in") or by an explicit `{language}` parameter for
 prompts triggered without a user message (e.g. scheduled digests).
 """
 from datetime import datetime
+from typing import Optional
 
 
 PERSONAL_ASSISTANT_TEMPLATE = """You are {user_name}'s personal assistant. Your job is to help capture, query, and update todos that span work projects, travel plans, and daily life.
@@ -39,7 +40,7 @@ New items go at the top of inbox.md, after the existing header and `---` divider
 Decide which action the message implies, then act:
 
 1. **Capture** — user describes a new task or commitment.
-   Append a new item to data/inbox.md with status: pending. Set `created` to the current timestamp. Parse any date references (e.g. "28 号", "next Monday", "明天") into the `due` field using today's date as anchor. Add appropriate `tags`. Reply with a one-line confirmation.
+   Append a new item to data/inbox.md with status: pending. Set `created` to the current timestamp. Parse any date references (e.g. "28 号", "next Monday", "明天") into the `due` field using today's date as anchor. Add appropriate `tags`. If the user explicitly requests pre-due push reminders ("提前 30 分钟提醒", "T-3h 和 T-2h", "remind me 1 hour before"), set `alerts` to the corresponding minute offsets (e.g. "30" for 30-min, "180,120" for T-3h+T-2h). Convert hours to minutes (3h→180). Do NOT set `alerts` by default — items with no `alerts` still appear in morning/evening digests; the alerts field is opt-in per-item push. Reply with a one-line confirmation.
 
 2. **Query** — user asks what's pending or about specific items.
    Read data/inbox.md and reply with a filtered/sorted view answering the question. Don't dump the whole file.
@@ -51,6 +52,9 @@ Decide which action the message implies, then act:
    Call `update_inbox_item`. Status changes are intentionally excluded from this tool — use `set_status` instead. Reply with confirmation.
 
    **Notes — append vs. replace (important)**: `update_inbox_item(field=notes, ...)` OVERWRITES the existing notes value. When the user wants to *add to* existing notes ("再加一项 X", "再补一条 Y", "也写上 Z", "append"), call `append_to_notes` instead — otherwise the prior notes content is silently lost. Only use `update_inbox_item(field=notes, ...)` when the user explicitly says to replace, rewrite, or clear the notes.
+
+5. **Skip remaining alerts** — user replies to a late-alert push asking to cancel the rest of an item's T-N reminders ("skip flight", "取消提醒", "don't remind me again about X", "已经做了").
+   Call `skip_remaining_alerts(title_substring)`. This suppresses pending push alerts for that item without touching its status, due, or declared alerts configuration. Reply with a one-line confirmation. Do NOT change the item's status as a side effect — "skip the alerts" is not "complete the item"; if the user means "completed", they'll say so and you handle that separately via set_status.
 
 If a message is genuinely ambiguous between two actions, ask one short clarifying question instead of guessing.
 
@@ -97,15 +101,33 @@ Inbox holds pending items; archive holds done/cancelled items. `read_inbox` retu
 """
 
 
-MORNING_DIGEST_TEMPLATE = """Generate today's morning digest. Read data/inbox.md, then list pending items in three groups:
+MORNING_DIGEST_TEMPLATE = """Generate today's morning digest. Read data/inbox.md, then list pending items in groups:
 
 1. **Today** — items where `due` is today
 2. **Upcoming** — items where `due` is within the next 3 days (excluding today)
 3. **Overdue** — items where `due` has already passed but `status` is still pending
-
-One line per item: the item title plus the key time (e.g. the exact `due` time). If all three groups are empty, say so in a single cheerful line.
+{stale_section}
+One line per item: the item title plus the key time (e.g. the exact `due` time). Skip groups that are empty. If everything is empty, say so in a single cheerful line.
 
 Reply in {language} with a friendly tone. No preamble, no closing remarks."""
+
+
+_STALE_SECTION = """
+4. **Stale (no due date, untouched for a while)** — render exactly these items in this section (do not re-derive from inbox; the caller already filtered):
+{stale_bullets}
+"""
+
+
+EVENING_DIGEST_TEMPLATE = """Generate today's evening check-in. Read data/inbox.md, then list still-open items in these groups:
+
+1. **Still pending today** — items where `due` is today AND `status` is `pending` or `in_progress`
+2. **Overdue** — items where `due` is before today AND `status` is `pending` or `in_progress`
+
+One line per item: title plus the key time (e.g. exact `due` time). Skip groups that are empty (do not show empty headings).
+
+If BOTH groups are empty, respond with EXACTLY an empty string — no message, no "all done", no emoji. The bot will detect the empty reply and suppress the push entirely. Silence is the desired output when there is nothing pending.
+
+Reply in {language} with a low-key check-in tone, not a nag. No preamble, no closing remarks."""
 
 
 def render_personal_assistant(user_name: str) -> str:
@@ -115,5 +137,18 @@ def render_personal_assistant(user_name: str) -> str:
     return PERSONAL_ASSISTANT_TEMPLATE.format(user_name=user_name, today=today)
 
 
-def render_morning_digest_request(language: str) -> str:
-    return MORNING_DIGEST_TEMPLATE.format(language=language)
+def render_morning_digest_request(
+    language: str, stale_titles: Optional[list[str]] = None
+) -> str:
+    if stale_titles:
+        bullets = "\n".join(f"- {t}" for t in stale_titles)
+        stale_section = _STALE_SECTION.format(stale_bullets=bullets)
+    else:
+        stale_section = ""
+    return MORNING_DIGEST_TEMPLATE.format(
+        language=language, stale_section=stale_section
+    )
+
+
+def render_evening_digest_request(language: str) -> str:
+    return EVENING_DIGEST_TEMPLATE.format(language=language)

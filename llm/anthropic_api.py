@@ -40,6 +40,7 @@ from storage.markdown import (
     read_archive,
     read_inbox,
     set_item_status,
+    skip_remaining_alerts,
     update_inbox_item,
 )
 
@@ -109,6 +110,10 @@ TOOLS: list[dict[str, Any]] = [
                     "type": "string",
                     "description": "Optional free-form context.",
                 },
+                "alerts": {
+                    "type": "string",
+                    "description": "Optional comma-separated list of minutes-before-due offsets at which the user wants push reminders (e.g. '180,120' for T-3h and T-2h, '30' for T-30min). Only meaningful for items whose due has HH:MM precision. Set ONLY when the user explicitly requests advance reminders ('提前 30 分钟提醒我', 'remind me 3 hours and 2 hours before', 'T-1h'). Do NOT set this by default — items with no `alerts` simply don't trigger T-N pushes; they still appear in the morning / evening digest. Translate hours to minutes (3h -> 180). For ambiguous phrasing ('提醒我' with no offset specified), ask the user how far in advance.",
+                },
             },
             "required": ["title"],
         },
@@ -169,6 +174,20 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "skip_remaining_alerts",
+        "description": "Cancel any pending T-N push alerts for an inbox item without losing its declared alerts configuration. Use this when the user replies to a late-alert message with 'skip <item>' / '取消提醒' / 'don't remind me' for that item — the user has already done the thing (or no longer wants the rest of the pre-due pushes). Marks all declared alert offsets as already fired. No effect on status, due, or the alerts declaration itself; only on which offsets count as 'already pushed'. The item is matched by the first whose title contains title_substring (case-insensitive).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title_substring": {
+                    "type": "string",
+                    "description": "Substring of the target item's title (case-insensitive).",
+                },
+            },
+            "required": ["title_substring"],
+        },
+    },
+    {
         "name": "set_status",
         "description": "Change an inbox item's status. This is the only tool that may change status. Allowed values: 'pending' (not yet started), 'in_progress' (currently being worked on), 'done' (completed), 'cancelled' (abandoned). Behaviour: (a) terminal statuses (done / cancelled) also move the item to archive.md — no separate archive call needed; (b) when transitioning a step to in_progress, if its parent project's mode is 'sequential', the tool refuses if another step in the same project is already in_progress (only one step at a time in a sequential project). When that happens, ask the user whether to finish or pause the blocking step first.",
         "input_schema": {
@@ -192,7 +211,14 @@ TOOLS: list[dict[str, Any]] = [
 
 def _item_payload(item: Item) -> dict[str, Any]:
     """Compact serialisation for a single Item — drops empty fields. Used by
-    list and find serialisers below."""
+    list and find serialisers below.
+
+    Deliberately EXCLUDES scheduler-internal fields (alerts, alerted,
+    alerted_stale): the LLM should not see, edit, or echo them back to the
+    user. Capture / query / status flows have no business touching alert
+    state — only the scheduler scan loop reads them, and only the
+    skip_remaining_alerts tool writes them indirectly.
+    """
     return {
         k: v
         for k, v in {
@@ -238,6 +264,7 @@ def _execute_tool(name: str, args: dict[str, Any]) -> Any:
             due=args.get("due"),
             tags=args.get("tags"),
             notes=args.get("notes"),
+            alerts=args.get("alerts"),
         )
         append_to_inbox(item)
         return {"ok": True, "title": item.title}
@@ -264,6 +291,11 @@ def _execute_tool(name: str, args: dict[str, Any]) -> Any:
         }
     if name == "find_item":
         return _matches_to_payload(find_item(args["title_substring"]))
+    if name == "skip_remaining_alerts":
+        item = skip_remaining_alerts(args["title_substring"])
+        if item is None:
+            return {"ok": False, "reason": "no item matched"}
+        return {"ok": True, "title": item.title}
     if name == "set_status":
         return _execute_set_status(args["title_substring"], args["status"])
     raise ValueError(f"unknown tool: {name!r}")
