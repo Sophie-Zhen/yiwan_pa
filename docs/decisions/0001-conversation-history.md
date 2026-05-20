@@ -59,17 +59,17 @@ This is a daily-driver UX problem, not an edge case — natural conversation hit
 
 **Option B — JSONL files at `data/history/<chat_id>.jsonl`**, with a sliding window combining turn count and elapsed time (drop messages older than 30 minutes; cap at 12 messages = 6 turns regardless), each entry tagged with a Unix timestamp.
 
-Initial proposal was option E (PTB `chat_data` + `PicklePersistence`). Sophie pushed back on the platform-coupling cost: E binds history storage to python-telegram-bot's data model, so a future migration to WhatsApp / WeChat / web UI would force a rewrite of history storage. B keeps storage as plain Python + filesystem, decoupled from the messaging platform.
+Initial proposal was option E (PTB `chat_data` + `PicklePersistence`). I pushed back on the platform-coupling cost: E binds history storage to python-telegram-bot's data model, so a future migration to WhatsApp / WeChat / web UI would force a rewrite of history storage. B keeps storage as plain Python + filesystem, decoupled from the messaging platform.
 
 ## Rationale (for chosen B)
 
-Ordered by priority weighting after Sophie's input:
+Ordered by priority weighting:
 
 1. **Platform-independent** — pure Python + filesystem. A future `messaging/whatsapp.py` or `messaging/web.py` reuses the same storage layer with no migration; only the chat-id key changes.
 2. **Survives restart** — beats A. Active conversations keep context across `docker compose up -d --build` (which happens often during dev iteration).
 3. **Auditable** — `tail data/history/<chat_id>.jsonl` is the highest-leverage debug tool we have. Pickle (E) requires a Python script to inspect.
 4. **Append-only is simple** — each write is one line appended, no race conditions, no risk of corrupting old data.
-5. **File size is not a real problem** — at Sophie's expected rate (~30 turns/day), the file grows ~3 MB/year. Five years = 16 MB. Rotation is unnecessary for the foreseeable scale and trivially added later if needed.
+5. **File size is not a real problem** — at the expected rate (~30 turns/day), the file grows ~3 MB/year. Five years = 16 MB. Rotation is unnecessary for the foreseeable scale and trivially added later if needed.
 6. **Higher learning value** than E — writing the read/write/window code yourself (vs PTB doing it) builds engineering intuition for file-backed state, which transfers to many other projects.
 
 Trade-off accepted: ~50 LoC instead of E's ~10. Each line does an explicit, comprehensible thing.
@@ -88,7 +88,7 @@ Trade-off accepted: ~50 LoC instead of E's ~10. Each line does an explicit, comp
 - File-system concurrency: if we ever run multiple bot instances against the same data dir, append might interleave. Single-instance for the foreseeable future, so non-issue, but document it.
 
 **Decisions deferred (recorded as TODO, not done in v0.1.1):**
-- File rotation when `data/history/<chat_id>.jsonl` grows past ~10 MB. Currently unnecessary at Sophie's rate (years of headroom). Add a 5-line rotate-on-startup helper when actually needed.
+- File rotation when `data/history/<chat_id>.jsonl` grows past ~10 MB. Currently unnecessary at the expected rate (years of headroom). Add a 5-line rotate-on-startup helper when actually needed.
 - ClaudeCodeBackend history support (via `claude -p --resume <session-id>`). Skipped because Pi runs anthropic backend and CC's own exploratory behavior partially compensates for missing history.
 - Compaction (Anthropic beta `compact-2026-01-12`) — only relevant if conversations grow long enough to approach context window limits. Not the case at current scale.
 
