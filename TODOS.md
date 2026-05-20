@@ -1,17 +1,16 @@
 # TODOS
 
-_Last updated: 2026-05-18_
+_Last updated: 2026-05-20_
 
 ## Current Focus
-Push strategy redesign — three coordinated channels (evening digest + stale-todo surfacing + per-item T-N alerts) sharing JobQueue + an `alerted_at` schema. Trust bug phase closed: Bug 2 (notes silent overwrite) shipped today via `append_to_notes` tool (commit `0507fbe`); 1b/3 closed a week ago via `find_item`; 1a observation continues but capture-no-read rule appears to have closed the trigger. Multi-step project feature also shipped 5/18 (commit `b190f9e`).
+Push strategy Phase 1 shipped 2026-05-20 (commit `44a0ed3`): per-item T-N alerts with normal + late-fire paths, evening digest at 21:00 with empty-state suppression, morning digest stale section with mark-on-send-success throttling. Now dogfeed period — observe how the three channels feel in real use before picking the next post-v0.1 item.
 
 ## Open Questions / Blockers
 - Bug 1a recurrence: continue dogfeed observation. If dedup recurs in inbox.md, backup fix is dispatch-layer same-chat() dedup on `append_to_inbox` (lowercase-substring title match).
-- Push strategy `alerted_at` schema: per-item field(s) on `Item` vs. separate sidecar file — design call to make before coding. Trade-off is item-locality vs. avoiding inbox.md churn on every alert.
+- Alert message language: scheduler.py currently emits English alert strings. Sophie chats in Chinese — observe during dogfeed whether English feels jarring; if so, swap to Chinese or move strings to a template module.
+- Late-alert "skip" end-to-end: the push → user reply → LLM calls `skip_remaining_alerts` → confirm chain hasn't been exercised live. Verify LLM correctly identifies intent and doesn't accidentally call `set_status` as a side effect.
 
 ## Todo
-- [ ] (post-v0.1) Per-item reminders: scheduler scans inbox for items whose due times are approaching and pushes per-item alerts (e.g. T-3h, T-2h before a flight). Needs a Python markdown parser in `storage/markdown.py` (already in place). Now part of the broader push-strategy-redesign item below.
-- [ ] (post-v0.1) Push strategy redesign: morning digest alone is insufficient (FIELDNOTES 5/5–5/6). Three coordinated push channels needed: (a) per-item T-N alerts for items with specific times — overlaps with the per-item reminders item above; (b) evening overdue digest at user-configurable time, listing today's still-pending items; (c) periodic "stale todo" surfacing for no-due items aged > N days. These three share the same JobQueue scheduler and ought to have a unified `alerted_at` / `last_surfaced_at` schema on items — design together, not piecemeal.
 - [ ] (post-v0.1) List grouping: capture multi-item lists (购物清单 / 行李清单) as a single inbox item with checkable sub-items, not N separate entries. Needs storage schema extension (e.g. `children` field on `Item`, or a new `ListItem` type), prompt instruction to recognise list intent during capture, and a sub-item-completion tool. Surfaced from dogfeed — 10 件购物 = 10 inbox lines was unmanageable.
 - [ ] (post-v0.1) `/todos` command + digest interactivity: on-demand display of all pending items including no-due-date ones (current `/digest` only renders today's morning-digest format and misses no-due items). After completing items during the day, user should be able to re-render the remaining list without restating the request. FIELDNOTES 4/29 #missing — Sophie observed needing to "不停 trigger digest" to track remaining work.
 - [ ] (post-v0.1) Handle reversal scenarios: when the user reverses a recent decision (e.g. cancelled "Model Y curtain" then "I bought it" — meaning Model Y), AnthropicBackend currently does not infer the reference (Opus 4.7 follows the prompt literally; Claude Code explores files more broadly). Prefer fixing via a combined `find_item` tool that searches both inbox and archive — keeps the system prompt lean instead of growing it with edge cases.
@@ -20,4 +19,5 @@ Push strategy redesign — three coordinated channels (evening digest + stale-to
 - [ ] (post-v0.1) Event log: capture past events (e.g. "今天洗车了") into an `events.md` alongside inbox/archive — timestamp + description — so the user can later ask "上次洗车是啥时候". Reuses the capture pipeline; needs intent disambiguation in the prompt/tools (past event vs. future todo) and a query tool that searches by keyword and returns the most recent match with elapsed time. Naturally pairs with the markdown parser work from per-item reminders.
 - [ ] (post-v0.1) History file rotation: when `data/history/<chat_id>.jsonl` grows past ~10 MB, truncate to last 800 lines on bot startup. Currently unnecessary at expected message rate (years of headroom), but trivially added if scale changes. See ADR 0001.
 - [ ] (portfolio) Backfill remaining ADRs: 0004 markdown files as storage (vs SQLite/DB) and 0005 Docker for Pi deployment (vs venv+systemd). ADRs 0002 (LLM backend abstraction) and 0003 (self-written agent loop) already shipped.
+- [ ] (portfolio) ADR 0006 — per-item scheduler state schema (alerts / alerted / alerted_stale on Item, vs. sidecar file). Cited as TODO in storage/markdown.py comment; document the choice + reasoning while it's fresh.
 - [ ] (portfolio) Add demo screenshot to README — deferred until English fake conversations are created for privacy. Reference path already in README at `docs/screenshot-chat.png`.
