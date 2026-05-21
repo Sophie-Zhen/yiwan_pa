@@ -112,7 +112,7 @@ TOOLS: list[dict[str, Any]] = [
                 },
                 "alerts": {
                     "type": "string",
-                    "description": "Optional comma-separated list of minutes-before-due offsets at which the user wants push reminders (e.g. '180,120' for T-3h and T-2h, '30' for T-30min). Only meaningful for items whose due has HH:MM precision. Set ONLY when the user explicitly requests advance reminders ('提前 30 分钟提醒我', 'remind me 3 hours and 2 hours before', 'T-1h'). Do NOT set this by default — items with no `alerts` simply don't trigger T-N pushes; they still appear in the morning / evening digest. Translate hours to minutes (3h -> 180). For ambiguous phrasing ('提醒我' with no offset specified), ask the user how far in advance.",
+                    "description": "Optional comma-separated list of minutes-before-due offsets at which the user wants push reminders (e.g. '180,120' for T-3h and T-2h, '30' for T-30min, '0' for a push at the due time itself). Only meaningful for items whose due has HH:MM precision. Set ONLY when the user explicitly requests reminders ('提前 30 分钟', 'T-1h', '就 3 点提醒', 'remind me at the time'). Do NOT set this by default — items with no `alerts` simply don't trigger T-N pushes; they still appear in the morning / evening digest. Translate hours to minutes (3h -> 180). Use '0' when the user wants a push exactly at the due moment ('就三点'/'到点提醒'/'remind me at X sharp'). For ambiguous phrasing ('提醒我' with no offset specified), ask the user how far in advance.",
                 },
             },
             "required": ["title"],
@@ -130,8 +130,8 @@ TOOLS: list[dict[str, Any]] = [
                 },
                 "field": {
                     "type": "string",
-                    "enum": ["title", "due", "tags", "notes"],
-                    "description": "Which field to update. Status is intentionally excluded — use set_status.",
+                    "enum": ["title", "due", "tags", "notes", "alerts"],
+                    "description": "Which field to update. Status is intentionally excluded — use set_status. For alerts: value is a comma-separated minute-offset list (same format as at capture, e.g. '60' or '180,120' or '0'); updating alerts also resets the item's fired-history so the new declaration takes effect cleanly.",
                 },
                 "value": {
                     "type": "string",
@@ -254,8 +254,27 @@ def _execute_tool(name: str, args: dict[str, Any]) -> Any:
     if name == "read_archive":
         return _items_to_payload(read_archive())
     if name == "append_to_inbox":
+        # Dispatch-layer guard against the Bug 1a hallucination pattern:
+        # LLM occasionally calls append_to_inbox an extra time after a
+        # legitimate update, producing a literal duplicate. Refuse here
+        # if an item with the exact same title already exists in inbox;
+        # the LLM should pivot to update_inbox_item or rephrase the title.
+        # Case-insensitive exact match — strict enough not to false-positive
+        # on similar-but-different items, lenient enough to catch literal
+        # title repeats which is the actual failure mode observed.
+        new_title = args["title"]
+        for existing in read_inbox():
+            if existing.title.lower() == new_title.lower():
+                return {
+                    "ok": False,
+                    "reason": (
+                        f"An item titled {existing.title!r} already exists in "
+                        "inbox. Use update_inbox_item to modify it, or choose "
+                        "a more specific title if you really intend a new item."
+                    ),
+                }
         item = Item(
-            title=args["title"],
+            title=new_title,
             created=datetime.now().strftime("%Y-%m-%d %H:%M"),
             status="pending",
             type=args.get("type"),

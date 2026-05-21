@@ -25,7 +25,7 @@ VALID_MODES = {None, "sequential", "parallel"}
 # Status removed: status changes go through set_item_status / move_to_archive,
 # not the general update path, so the in_progress invariant is enforced.
 # Type / mode / project also not here — they're set at creation, not edited.
-UPDATABLE_FIELDS = {"title", "due", "tags", "notes"}
+UPDATABLE_FIELDS = {"title", "due", "tags", "notes", "alerts"}
 
 INBOX_HEADER = "# Inbox\n\nActive todos. New items appended at the top.\n\n---\n"
 ARCHIVE_HEADER = "# Archive\n\nCompleted and cancelled items. Most recent first.\n\n---\n"
@@ -34,8 +34,9 @@ _FIELD_LINE = re.compile(r"^- (\w+):\s*(.+)$")
 
 
 def _parse_offsets(field_name: str, value: Optional[str]) -> list[int]:
-    """Parse a comma-separated string of positive ints (minute offsets).
-    Empty / None returns []. Raises ValueError on malformed input.
+    """Parse a comma-separated string of non-negative ints (minute offsets).
+    Empty / None returns []. 0 is valid and means "fire at the due time
+    itself" (T-0). Raises ValueError on malformed input.
     """
     if not value:
         return []
@@ -48,9 +49,9 @@ def _parse_offsets(field_name: str, value: Optional[str]) -> list[int]:
             raise ValueError(
                 f"invalid {field_name} entry {chunk!r}: not an integer"
             ) from exc
-        if n <= 0:
+        if n < 0:
             raise ValueError(
-                f"invalid {field_name} entry {n}: must be positive"
+                f"invalid {field_name} entry {n}: must be non-negative"
             )
         out.append(n)
     return out
@@ -197,14 +198,23 @@ def update_inbox_item(
     """Update one field on the first inbox item whose title contains
     `title_substring` (case-insensitive). Returns the updated item, or None
     if no item matched.
+
+    Special handling for field='alerts': the new value is validated as a
+    parseable offset list (raises ValueError on malformed input), and
+    `alerted` is reset to None so previously-fired offsets from the old
+    declaration don't carry over (a fresh declaration means fresh state).
     """
     if field not in UPDATABLE_FIELDS:
         raise ValueError(f"unknown field: {field!r}")
+    if field == "alerts":
+        _parse_offsets("alerts", value)  # validate; raises on bad input
     items = read_inbox()
     needle = title_substring.lower()
     for item in items:
         if needle in item.title.lower():
             setattr(item, field, value)
+            if field == "alerts":
+                item.alerted = None
             _write(INBOX_PATH, INBOX_HEADER, items)
             return item
     return None

@@ -55,7 +55,8 @@ def _parse_due(due: str) -> Optional[datetime]:
 
 
 def _humanize(minutes: int) -> str:
-    """180 -> '3h', 30 -> '30min', 90 -> '1h30min'."""
+    """180 -> '3h', 30 -> '30min', 90 -> '1h30min', 0 -> '0min' (callers
+    that want a special phrasing for T-0 should branch before calling)."""
     if minutes >= 60:
         h, m = divmod(minutes, 60)
         return f"{h}h{m}min" if m else f"{h}h"
@@ -90,6 +91,8 @@ def _classify_alerts(
 
 
 def _format_normal(item: Item, offset: int) -> str:
+    if offset == 0:
+        return f"⏰ {item.title}\nDue now ({item.due})."
     return (
         f"⏰ {item.title}\n"
         f"T-{_humanize(offset)} reminder (due {item.due})."
@@ -104,16 +107,22 @@ def _format_late(
     so the user can decide whether to keep or skip the rest."""
     due = _parse_due(item.due)
     assert due is not None  # caller only invokes when late list is non-empty
-    parts = [
-        f"T-{_humanize(o)} (was {(due - timedelta(minutes=o)).strftime('%H:%M')})"
-        for o in late_offsets
-    ]
+
+    def _label(o: int) -> str:
+        when = (due - timedelta(minutes=o)).strftime("%H:%M")
+        if o == 0:
+            return f"due time {when}"
+        return f"T-{_humanize(o)} (was {when})"
+
+    parts = [_label(o) for o in late_offsets]
     declared = _parse_offsets("alerts", item.alerts)
     already_fired = set(_parse_offsets("alerted", item.alerted))
     after = already_fired | set(late_offsets)
     remaining = [o for o in declared if o not in after]
     if remaining:
-        rem_str = ", ".join(f"T-{_humanize(o)}" for o in remaining)
+        rem_str = ", ".join(
+            "due time" if o == 0 else f"T-{_humanize(o)}" for o in remaining
+        )
         tail = (
             f"\nRemaining: {rem_str}. "
             f"Reply 'skip {item.title}' to cancel them."
