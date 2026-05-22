@@ -18,7 +18,7 @@ from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -219,9 +219,20 @@ async def send_evening_digest(context: ContextTypes.DEFAULT_TYPE) -> None:
     await context.bot.send_message(chat_id=USER_CHAT_ID, text=reply)
 
 
+async def _set_commands(application: Application) -> None:
+    """Register the slash-command menu Telegram shows when the user types '/'.
+    Runs once on startup via post_init; idempotent. Keep in sync with the
+    CommandHandler list in main()."""
+    await application.bot.set_my_commands([
+        BotCommand("id", "Show current chat_id"),
+        BotCommand("digest", "Trigger today's morning digest"),
+        BotCommand("todos", "List all pending items"),
+    ])
+
+
 def main() -> None:
     token = os.environ["TELEGRAM_BOT_TOKEN"]
-    app = Application.builder().token(token).build()
+    app = Application.builder().token(token).post_init(_set_commands).build()
 
     app.add_handler(CommandHandler("id", cmd_id))
     app.add_handler(CommandHandler("digest", cmd_digest))
