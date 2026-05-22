@@ -118,6 +118,18 @@ _STALE_SECTION = """
 """
 
 
+TODOS_TEMPLATE = """Generate a complete view of all open items (status pending or in_progress). Read data/inbox.md, then group:
+
+1. **Today** — items where `due` is today
+2. **Upcoming** — items where `due` is within the next 3 days (excluding today)
+3. **Overdue** — items where `due` has already passed
+4. **No due date** — items with no `due` field, ordered by `created` (oldest first)
+
+One line per item: title plus the key time (`due` time for groups 1-3; `(created YYYY-MM-DD)` for group 4). Skip groups that are empty. If everything is empty, say so in a single line.
+
+Reply in {language} with a brief, neutral tone. No preamble, no closing remarks."""
+
+
 EVENING_DIGEST_TEMPLATE = """Generate today's evening check-in. Read data/inbox.md, then list still-open items in these groups:
 
 1. **Still pending today** — items where `due` is today AND `status` is `pending` or `in_progress`
@@ -152,3 +164,7 @@ def render_morning_digest_request(
 
 def render_evening_digest_request(language: str) -> str:
     return EVENING_DIGEST_TEMPLATE.format(language=language)
+
+
+def render_todos_request(language: str) -> str:
+    return TODOS_TEMPLATE.format(language=language)

@@ -33,6 +33,7 @@ from prompts import (
     render_evening_digest_request,
     render_morning_digest_request,
     render_personal_assistant,
+    render_todos_request,
 )
 from storage.history import append_turn, read_history
 from storage.markdown import get_stale_items, mark_stale_alerted
@@ -142,6 +143,21 @@ async def cmd_digest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text(reply)
 
 
+async def cmd_todos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """On-demand full pending list, including items with no due date.
+    Distinct from /digest, which uses the morning-digest format and only
+    surfaces no-due items via the stale filter."""
+    if not _is_authorized(update):
+        logger.warning("unauthorized chat %s blocked (/todos)", update.effective_chat.id)
+        return
+    try:
+        reply = await _ask_llm(render_todos_request(USER_LANGUAGE))
+    except Exception as exc:
+        logger.exception("todos failed")
+        reply = f"[error] {exc}"
+    await update.message.reply_text(reply)
+
+
 async def send_daily_digest(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Scheduled task: build the morning digest and push to USER_CHAT_ID.
 
@@ -209,6 +225,7 @@ def main() -> None:
 
     app.add_handler(CommandHandler("id", cmd_id))
     app.add_handler(CommandHandler("digest", cmd_digest))
+    app.add_handler(CommandHandler("todos", cmd_todos))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     if app.job_queue is None:
