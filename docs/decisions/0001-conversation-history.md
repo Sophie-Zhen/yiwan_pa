@@ -28,18 +28,18 @@ This is a daily-driver UX problem, not an edge case — natural conversation hit
 - Existing `LLMBackend.chat(user_message, system_prompt)` is stateless by design — no history parameter.
 - The bot uses `python-telegram-bot` (PTB), which provides per-chat `chat_data` dict and optional `PicklePersistence` for free.
 - Storage layer (`storage/markdown.py`) handles inbox/archive but is not designed for conversation logs.
-- v0.1 deliberately punted this for simplicity — turned out to be a wrong call (the cost of "no context" surfaces every day, not occasionally).
+- v0.1 deliberately punted this for simplicity — turned out to be a wrong call (the cost surfaced repeatedly within hours of v0.1 ship).
 
 ## Options considered
 
-| | History storage | LoC | Survives restart | Audit | New deps |
-|---|---|---|---|---|---|
-| **A. In-process dict** | bot.py memory | ~25 | ❌ | hard | none |
-| **B. JSONL files** | `data/history-{chat_id}.jsonl` | ~50 | ✅ | `cat`-able | none |
-| **C. Append to markdown** | `data/history.md` | ~50 | ✅ | readable | none |
-| **D. `claude -p --resume`** | Claude Code's session file | ~10 | ✅ (CC's) | CC internal | none |
-| **E. PTB `chat_data` + `PicklePersistence`** | bot state pickle file | ~10 | ✅ | binary | none |
-| **F. SQLite** | `data/bot.db` | ~80 | ✅ | sqlite3 cli | sqlite3 (stdlib) |
+| | History storage | Survives restart | Audit | New deps |
+|---|---|---|---|---|
+| **A. In-process dict** | bot.py memory | ❌ | hard | none |
+| **B. JSONL files** | `data/history-{chat_id}.jsonl` | ✅ | `cat`-able | none |
+| **C. Append to markdown** | `data/history.md` | ✅ | readable | none |
+| **D. `claude -p --resume`** | Claude Code's session file | ✅ (CC's) | CC internal | none |
+| **E. PTB `chat_data` + `PicklePersistence`** | bot state pickle file | ✅ | binary | none |
+| **F. SQLite** | `data/bot.db` | ✅ | sqlite3 cli | sqlite3 (stdlib) |
 
 ### Rejected outright
 
@@ -51,15 +51,15 @@ This is a daily-driver UX problem, not an edge case — natural conversation hit
 
 **A. In-process dict** — simplest, smallest surface, no external dependencies. Lost on container restart. On Pi the bot rarely crashes but `docker compose up -d --build` (every code update) loses history. Acceptable if updates are infrequent; awkward during active dev.
 
-**B. JSONL files** — most transparent (`tail -f data/history/<id>.jsonl` to debug), conceptually consistent with the existing markdown-on-disk pattern. Highest LoC of the three. Has to manage file rotation as history grows long.
+**B. JSONL files** — most transparent (`tail -f data/history/<id>.jsonl` to debug), conceptually consistent with the existing markdown-on-disk pattern. Has to manage file rotation as history grows long.
 
-**E. PTB `chat_data` + `PicklePersistence`** — uses python-telegram-bot's built-in per-chat state mechanism. Persistence "free" via PTB's `PicklePersistence`. Smallest code, standard PTB idiom (every PTB tutorial uses this for chat state). Pickle files are opaque (binary, Python-specific, fragile across Python upgrades).
+**E. PTB `chat_data` + `PicklePersistence`** — uses python-telegram-bot's built-in per-chat state mechanism. Persistence "free" via PTB's `PicklePersistence`. Standard PTB idiom. Pickle files are opaque (binary, Python-specific, fragile across Python upgrades).
 
 ## Decision
 
 **Option B — JSONL files at `data/history/<chat_id>.jsonl`**, with a sliding window combining turn count and elapsed time (drop messages older than 30 minutes; cap at 12 messages = 6 turns regardless), each entry tagged with a Unix timestamp.
 
-Initial proposal was option E (PTB `chat_data` + `PicklePersistence`). I pushed back on the platform-coupling cost: E binds history storage to python-telegram-bot's data model, so a future migration to WhatsApp / WeChat / web UI would force a rewrite of history storage. B keeps storage as plain Python + filesystem, decoupled from the messaging platform.
+Initial proposal was option E (PTB `chat_data` + `PicklePersistence`). I pushed back on the platform-coupling cost: E binds history storage to python-telegram-bot's data model. B keeps storage as plain Python + filesystem, decoupled from the messaging platform.
 
 ## Rationale (for chosen B)
 
@@ -70,9 +70,8 @@ Ordered by priority weighting:
 3. **Auditable** — `tail data/history/<chat_id>.jsonl` is the highest-leverage debug tool we have. Pickle (E) requires a Python script to inspect.
 4. **Append-only is simple** — each write is one line appended, no race conditions, no risk of corrupting old data.
 5. **File size is not a real problem** — at the expected rate (~30 turns/day), the file grows ~3 MB/year. Five years = 16 MB. Rotation is unnecessary for the foreseeable scale and trivially added later if needed.
-6. **Higher learning value** than E — writing the read/write/window code yourself (vs PTB doing it) builds engineering intuition for file-backed state, which transfers to many other projects.
 
-Trade-off accepted: ~50 LoC instead of E's ~10. Each line does an explicit, comprehensible thing.
+Trade-off accepted: more code than E. Each line does an explicit, comprehensible thing.
 
 ## Consequences
 
@@ -83,12 +82,12 @@ Trade-off accepted: ~50 LoC instead of E's ~10. Each line does an explicit, comp
 - Manual edits / inspection: you can hand-edit a JSONL file if some message went sideways.
 
 **Harder / new concerns:**
-- ~50 LoC of file I/O code to maintain (compared to ~10 LoC if we'd used PTB persistence).
-- Token cost per `chat()` call increases by ~600-1200 tokens (up to ~$0.4/day at current usage with Opus 4.7). Acceptable, but worth re-checking when usage grows.
+- File I/O code to maintain (compared to "free" via PTB persistence).
+- Token cost per `chat()` call grows with the history window. Not measured at decision time — re-check if usage scales up.
 - File-system concurrency: if we ever run multiple bot instances against the same data dir, append might interleave. Single-instance for the foreseeable future, so non-issue, but document it.
 
 **Decisions deferred (recorded as TODO, not done in v0.1.1):**
-- File rotation when `data/history/<chat_id>.jsonl` grows past ~10 MB. Currently unnecessary at the expected rate (years of headroom). Add a 5-line rotate-on-startup helper when actually needed.
+- File rotation when `data/history/<chat_id>.jsonl` grows past ~10 MB. Currently unnecessary at the expected rate (years of headroom). Add a rotate-on-startup helper when actually needed.
 - ClaudeCodeBackend history support (via `claude -p --resume <session-id>`). Skipped because Pi runs anthropic backend and CC's own exploratory behavior partially compensates for missing history.
 - Compaction (Anthropic beta `compact-2026-01-12`) — only relevant if conversations grow long enough to approach context window limits. Not the case at current scale.
 

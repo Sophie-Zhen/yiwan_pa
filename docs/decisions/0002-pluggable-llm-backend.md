@@ -10,7 +10,7 @@
 
 The bot needs to call an LLM to understand natural-language messages. Two practical paths exist for getting Claude into the bot:
 
-1. **Shell out to the local `claude` CLI** (`claude -p`) — reuses my Claude Code subscription, no API key, no per-token cost. But spawns a Node subprocess every call, leaks behavior from the user's global `CLAUDE.md` and harness defaults, and adds 1-2 seconds of cold-start latency.
+1. **Shell out to the local `claude` CLI** (`claude -p`) — reuses my Claude Code subscription, no API key, no per-token cost. But spawns a Node subprocess every call, leaks behavior from the user's global `CLAUDE.md` and harness defaults, and adds subprocess startup latency.
 2. **Use the `anthropic` Python SDK directly** — pay-per-token, predictable behavior, programmatic control over tools and the agent loop. Best for production but costs money during dev iteration.
 
 Each path is right for a different phase (dev vs prod), and there are likely future backends I'll want — a local LLM (Ollama on a home PC) for privacy, or another provider for comparison. The decision is whether to commit early to one path or design for plurality.
@@ -42,20 +42,17 @@ Each path is right for a different phase (dev vs prod), and there are likely fut
 
 - **Resolves the dev-vs-prod tension**: same `bot.py`, different env var. Iterate for free during dev with `LLM_BACKEND=claude_code`, run production on Pi with `LLM_BACKEND=anthropic`.
 - **Future-proofs**: a third backend (local LLM, OpenAI, whatever) is one new file plus a line in `get_backend()`. Bot logic doesn't change.
-- **Strong portfolio signal**: dependency inversion is a classic interview topic; having actually shipped it (with two real implementations, not just a single-impl interface) is a credible answer to "tell me about an architectural decision you made."
-- **Keeps optionality cheap**: the cost is ~50 LoC of abstract class + factory + two backends, vs ~20 LoC for hardcoding one. Acceptable for the flexibility it buys.
+- **Keeps optionality cheap**: the cost is one extra file (the abstract class) plus a small factory function. Acceptable for the flexibility it buys.
 
 ## Consequences
 
 **Easier:**
 - Switching LLM backend = one env var change. Tested in practice — the same bot ran on `claude_code` for dev, then `anthropic` for production with zero code changes.
-- New backends (per the TODOS "Local LLM backend" item) are mechanically simple to add: subclass `LLMBackend`, register in `get_backend()`, set the env var.
-- Future testing — a mock `LLMBackend` would be trivial to write for unit tests.
+- Adding a new backend requires implementing `LLMBackend`, registering it in `get_backend()`, and setting `LLM_BACKEND`.
 
 **Harder:**
 - Three files (`base.py`, `claude_code.py`, `__init__.py` factory, plus eventually `anthropic_api.py`) where one would do.
 - The interface shape (`chat(user_message, system_prompt, ...) -> str`) is now a contract — adding capabilities like streaming or multi-modal input means updating both the interface and every implementation.
-- Slightly more cognitive load for new readers of the repo: "where does the LLM call actually happen?" is one indirection deeper.
 
 **To revisit:**
 - The interface evolved once already to support conversation history (see ADR 0001 — `history` parameter added to `chat()`). Future evolutions are likely:
