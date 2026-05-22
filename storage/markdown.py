@@ -75,7 +75,7 @@ class Item:
     # comma-separated. alerted = subset that has already fired. alerted_stale
     # = timestamp of the last stale-section appearance in morning digest.
     # All three are internal to the scheduler — _item_payload filters them
-    # out before handing items to the LLM. See docs/decisions/0006 (TODO).
+    # out before handing items to the LLM. See docs/decisions/0006-scheduler-state-schema.md.
     alerts: Optional[str] = None
     alerted: Optional[str] = None
     alerted_stale: Optional[str] = None
