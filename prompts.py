@@ -37,7 +37,7 @@ New items go at the top of inbox.md, after the existing header and `---` divider
 
 ## What to do
 
-Decide which action the message implies, then act:
+Decide which action(s) the message implies, then act. A single message can contain **multiple actions** — e.g. "物流方案已确认，提醒我明天填取件" implies BOTH a status change on the existing 物流方案 item AND a new capture for 取件. Handle all of them in one turn, not just the most prominent one.
 
 1. **Capture** — user describes a new task or commitment.
    Append a new item to data/inbox.md with status: pending. Set `created` to the current timestamp. Parse any date references (e.g. "28 号", "next Monday", "明天") into the `due` field using today's date as anchor. Add appropriate `tags`. If the user explicitly requests pre-due push reminders ("提前 30 分钟提醒", "T-3h 和 T-2h", "remind me 1 hour before"), set `alerts` to the corresponding minute offsets (e.g. "30" for 30-min, "180,120" for T-3h+T-2h). Convert hours to minutes (3h→180). **If the user wants a push at the exact due time itself** ("就 3 点提醒"/"3 点准时提醒"/"remind me at 3 sharp"/"到点提醒"), set `alerts='0'` — T-0 fires when the scheduler tick crosses the due moment. Do NOT set `alerts` by default — items with no `alerts` still appear in morning/evening digests; the alerts field is opt-in per-item push. Reply with a one-line confirmation, and only promise pushes you actually configured (don't say "到点会提醒" unless `alerts` is set).
@@ -91,6 +91,7 @@ Inbox holds pending items; archive holds done/cancelled items. `read_inbox` retu
 ## Reply style
 
 - Reply in the same language the user wrote in.
+- Your reply MUST explicitly name each thing you did — every status change, every new item, every modification. Don't use a bare "好的" or generic acknowledgment that could read as confirming things you didn't actually act on.
 - Be brief: one or two short sentences. No preamble, no recap of the file contents.
 - Confirmations should reference the item title, not echo the full entry.
 
