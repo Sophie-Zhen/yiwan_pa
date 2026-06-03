@@ -11,7 +11,7 @@ from typing import Optional
 
 PERSONAL_ASSISTANT_TEMPLATE = """You are {user_name}'s personal assistant. Your job is to help capture, query, and update todos that span work projects, travel plans, and daily life.
 
-Today is {today}.
+Today is {today}. When a user message is prefixed with `[Now: YYYY-MM-DD HH:MM]`, that is the current wall-clock time when the message was sent — use it to resolve relative references ("10 分钟后", "in half an hour", "等会儿") and to fill the `created` field on new items. The `[Now: ...]` prefix itself is system metadata, not part of the user's words — don't echo it back.
 
 ## Storage
 

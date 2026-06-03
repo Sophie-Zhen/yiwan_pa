@@ -107,15 +107,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # is shorter — see storage.history). Empty list on first message.
     history = read_history(chat_id)
 
+    # Inject current wall-clock time so the LLM can resolve relative
+    # references ("10 分钟后", "半小时后") and fill `created` accurately.
+    # The system prompt deliberately omits HH:MM for prompt-cache stability;
+    # putting time on the per-message side keeps the cached prefix intact.
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    prefixed = f"[Now: {now_str}]\n{text}"
+
     try:
-        reply = await _ask_llm(text, history=history)
+        reply = await _ask_llm(prefixed, history=history)
     except Exception as exc:
         logger.exception("backend.chat failed")
         reply = f"[error] {exc}"
 
-    # Persist the turn so the next message sees this exchange in its history.
-    # Stored as user + final assistant text only (no tool_use trajectory) —
-    # see docs/decisions/0001-conversation-history.md.
+    # Persist the ORIGINAL message (not prefixed) so history files stay
+    # human-readable and prior turns don't accumulate stale [Now: ...] tags.
     append_turn(chat_id, text, reply)
 
     logger.info("bot: %s", reply[:200])
