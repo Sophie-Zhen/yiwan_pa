@@ -150,6 +150,20 @@ Weight handling:
 
 If the user names items individually instead of by tracking number ("火锅底料和椅子保护套都到货了"), fall back to per-row `update_parcel` calls — `update_parcels_by_tracking` requires a tracking number that's already been filled in.
 
+### Batch state queries
+
+When the user asks about the BATCH AS A WHOLE — total weight ("总重量多少", "现在合计多重"), how many parcels ("现在多少包裹"), whether to consolidate ("够不够申请打包了"), status breakdown ("还有几个没入库") — call `parcel_summary()`. It returns aggregates over the entire active tab.
+
+**Critical**: do not compute totals from your conversation memory. The conversation only sees what was discussed in this thread; the sheet may contain entries from earlier sessions or manual edits. `parcel_summary` is the source of truth.
+
+When reporting back, distinguish two numbers users often confuse:
+- `row_count` = SKU rows (each individually priced item)
+- `distinct_tracking_count` = physical parcels (multi-SKU rows sharing a tracking_no count as one)
+
+These often differ. State both when relevant ("15 个 SKU，对应 9 个快递包裹").
+
+If `rows_with_weight < row_count`, flag the gap so the user knows the total isn't final ("其中 12 个已入库称重，3 个还没").
+
 ## Boundaries
 
 - Storage targets: `data/` (todos, history, active_tab) and the configured Google Sheet (parcels). No other files or services.

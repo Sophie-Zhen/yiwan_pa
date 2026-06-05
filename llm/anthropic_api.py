@@ -46,6 +46,7 @@ from storage.markdown import (
 from tools.parcels import (
     apply_exchange_rate,
     find_parcel,
+    parcel_summary,
     record_parcel,
     settle_shipping,
     update_parcel,
@@ -310,6 +311,11 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "parcel_summary",
+        "description": "Aggregate totals over the active parcel tab. Use this to answer questions about the batch state — '总重量', '现在多少包裹', '能不能申请打包了', '有几个还没入库'. Returns row_count (number of SKU rows), distinct_tracking_count (number of physical parcels — multi-SKU rows sharing a tracking_no count as one), total_weight_kg (sum of 国内包裹重量 where filled), rows_with_weight (how many rows contribute to that sum), and status_counts (count per status value). When reporting back to the user: mention BOTH the SKU row count and the distinct tracking count (they may differ due to multi-SKU per parcel), and flag if rows_with_weight < row_count (some parcels still unweighed). DO NOT estimate totals from conversation memory — always call this tool.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
         "name": "update_parcels_by_tracking",
         "description": "Update ALL parcel rows sharing the same 国内快递单号 (one physical parcel often contains multiple SKUs / multiple sheet rows). Use this when the user reports status / weight for a tracking number — e.g. '9303 入库拍照 1.5kg' or '9303 签收了'. Status and notes apply uniformly to every matched row. total_weight_kg is the carrier-reported weight for the WHOLE parcel and is SPLIT EQUALLY across matched rows (e.g. 1.5kg over 2 rows → 0.75kg each). Always confirm the split back to the user ('1.5kg 平分到 2 件，各 0.75kg'). For NON-equal splits, do NOT call this tool — instead, parse the user's stated ratio/literal weights yourself and make one update_parcel call per row with the computed per-row weight.",
         "input_schema": {
@@ -501,6 +507,8 @@ def _execute_tool(name: str, args: dict[str, Any]) -> Any:
             weight_kg=args.get("weight_kg"),
             notes=args.get("notes"),
         )
+    if name == "parcel_summary":
+        return parcel_summary()
     if name == "update_parcels_by_tracking":
         return update_parcels_by_tracking(
             tracking_no=args["tracking_no"],

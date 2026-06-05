@@ -274,6 +274,66 @@ def update_parcel(
     return {"row": row, "values": tab.row_values(row)}
 
 
+def parcel_summary() -> dict:
+    """Aggregate totals over the active tab. Used to answer questions like
+    "总重量多少" / "够不够申请转运打包" / "现在有多少包裹".
+
+    Reads every data row (skipping the summary row if present) and reports:
+      - row_count: number of SKU rows
+      - distinct_tracking_count: number of unique 国内快递单号 (= physical
+        parcels; multi-SKU rows sharing a tracking_no count as one)
+      - total_weight_kg: sum of 国内包裹重量 across rows where it is filled
+      - rows_with_weight: how many rows contribute to that sum (so the LLM
+        can flag if many rows are still unweighed)
+      - status_counts: count per status value
+    """
+    tab = _active_worksheet()
+    all_values = tab.get_all_values()
+
+    row_count = 0
+    total_weight = 0.0
+    rows_with_weight = 0
+    tracking_nos: set[str] = set()
+    status_counts: dict[str, int] = {s: 0 for s in VALID_STATUSES}
+
+    for row in all_values[1:]:
+        item = row[COL_ITEM - 1] if len(row) >= COL_ITEM else ""
+        if item == SUMMARY_MARKER:
+            continue
+        qty = row[COL_QUANTITY - 1] if len(row) >= COL_QUANTITY else ""
+        if not qty:
+            continue
+        row_count += 1
+
+        weight_str = (
+            row[COL_DOMESTIC_WEIGHT - 1]
+            if len(row) >= COL_DOMESTIC_WEIGHT
+            else ""
+        )
+        if weight_str:
+            try:
+                total_weight += float(weight_str)
+                rows_with_weight += 1
+            except ValueError:
+                pass
+
+        tracking = row[COL_TRACKING - 1] if len(row) >= COL_TRACKING else ""
+        if tracking:
+            tracking_nos.add(str(tracking))
+
+        status = row[COL_STATUS - 1] if len(row) >= COL_STATUS else ""
+        if status in status_counts:
+            status_counts[status] += 1
+
+    return {
+        "row_count": row_count,
+        "distinct_tracking_count": len(tracking_nos),
+        "total_weight_kg": round(total_weight, 3),
+        "rows_with_weight": rows_with_weight,
+        "status_counts": status_counts,
+    }
+
+
 def update_parcels_by_tracking(
     tracking_no: str,
     status: str | None = None,
