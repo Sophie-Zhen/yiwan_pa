@@ -8,4 +8,6 @@ venv/
 data/inbox.md
 data/archive.md
 data/history/
+data/credentials/
+data/active_tab.txt
 FIELDNOTES.md

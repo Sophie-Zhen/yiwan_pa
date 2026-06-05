@@ -164,6 +164,46 @@ async def cmd_todos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(reply)
 
 
+async def cmd_active(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show or set the active parcel tab (e.g. 6月有易) for transhipment tools.
+
+    `/active` — show current active tab.
+    `/active <name>` — switch to that tab; validates it exists in the sheet.
+    """
+    if not _is_authorized(update):
+        logger.warning("unauthorized chat %s blocked (/active)", update.effective_chat.id)
+        return
+
+    from gspread.exceptions import WorksheetNotFound
+
+    from tools.parcels import get_active_tab, set_active_tab
+
+    arg = " ".join(context.args).strip() if context.args else ""
+    if not arg:
+        current = get_active_tab()
+        msg = (
+            f"当前 active tab: {current}"
+            if current
+            else "未设置 active tab，用 `/active <tab名>` 设置"
+        )
+        await update.message.reply_text(msg)
+        return
+
+    try:
+        set_active_tab(arg)
+    except WorksheetNotFound:
+        await update.message.reply_text(
+            f"找不到 tab: {arg}（拼写是否与 sheet 中显示一致？）"
+        )
+        return
+    except KeyError as exc:
+        await update.message.reply_text(
+            f"配置缺失: {exc}（检查 .env 里的 GOOGLE_SHEETS_CREDENTIALS / GOOGLE_SHEET_ID）"
+        )
+        return
+    await update.message.reply_text(f"active tab 切换到 {arg}")
+
+
 async def send_daily_digest(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Scheduled task: build the morning digest and push to USER_CHAT_ID.
 
@@ -233,6 +273,7 @@ async def _set_commands(application: Application) -> None:
         BotCommand("id", "Show current chat_id"),
         BotCommand("digest", "Trigger today's morning digest"),
         BotCommand("todos", "List all pending items"),
+        BotCommand("active", "Show or set the active parcel tab"),
     ])
 
 
@@ -243,6 +284,7 @@ def main() -> None:
     app.add_handler(CommandHandler("id", cmd_id))
     app.add_handler(CommandHandler("digest", cmd_digest))
     app.add_handler(CommandHandler("todos", cmd_todos))
+    app.add_handler(CommandHandler("active", cmd_active))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     if app.job_queue is None:

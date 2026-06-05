@@ -43,6 +43,14 @@ from storage.markdown import (
     skip_remaining_alerts,
     update_inbox_item,
 )
+from tools.parcels import (
+    apply_exchange_rate,
+    find_parcel,
+    record_parcel,
+    settle_shipping,
+    update_parcel,
+    update_parcels_by_tracking,
+)
 
 from .base import LLMBackend
 
@@ -206,6 +214,160 @@ TOOLS: list[dict[str, Any]] = [
             "required": ["title_substring", "status"],
         },
     },
+    # === Transhipment parcel tools (separate workflow from todos) ===
+    # These write to a Google Sheet, NOT to data/inbox.md. Use them when the
+    # user is talking about ordering / receiving / consolidating parcels for
+    # international shipping, not for ordinary todos.
+    {
+        "name": "record_parcel",
+        "description": "Append a new parcel to the active transhipment tab (Stage 1: capture). Use this when the user describes a NEW online order they just placed — e.g. '今天 pdd 上买了 4 包桥头火锅底料 每包 18.8', '在 1688 下单了 1 个门锁 112 块'. Extract date, item name, platform, quantity, and any provided price. Provide AT LEAST ONE of unit_price or total_price — if user gave only quantity + unit price, pass unit_price; if user gave only quantity + total, pass total_price; if both, pass both. The sheet will keep the trio (qty, unit, total) consistent via formula. Status defaults to '未发货'; 转运渠道 is inferred from the active tab name. DO NOT use this for ordinary todos — for todos use append_to_inbox.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string",
+                    "description": "Purchase date in YYYY-MM-DD format.",
+                },
+                "item": {
+                    "type": "string",
+                    "description": "Item name as the user described it.",
+                },
+                "platform": {
+                    "type": "string",
+                    "description": "Purchase platform (e.g. pdd, 1688, 京东, tb).",
+                },
+                "quantity": {
+                    "type": "integer",
+                    "description": "Quantity purchased.",
+                },
+                "unit_price": {
+                    "type": "number",
+                    "description": "Per-unit price in RMB. Omit if the user only gave total_price.",
+                },
+                "total_price": {
+                    "type": "number",
+                    "description": "Total price in RMB. Omit if the user only gave unit_price.",
+                },
+                "tracking_no": {
+                    "type": "string",
+                    "description": "国内快递单号. Usually unknown at order time — omit unless explicitly provided.",
+                },
+                "weight_kg": {
+                    "type": "number",
+                    "description": "国内包裹重量 in kg. Usually unknown at order time — omit unless explicitly provided.",
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "Optional free-form notes.",
+                },
+            },
+            "required": ["date", "item", "platform", "quantity"],
+        },
+    },
+    {
+        "name": "find_parcel",
+        "description": "Search the active parcel tab for rows whose 商品名称 or 国内快递单号 contains the query substring. Used to resolve user references like '火锅底料', '8888', '9303 那个快递'. Returns up to N matches with row number, item, tracking_no, status. When multiple matches come back, ask the user to disambiguate — DO NOT guess.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Substring to match against 商品名称 or 国内快递单号.",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "update_parcel",
+        "description": "Update fields on a specific parcel row found via find_parcel. The row argument is the 1-based sheet row number. Status enum (map natural language to these): '未发货' (default after record), '在途' (user says '发货了'/'已发'), '已签收' (user says '签收了'/'到货了'/'拿到了'), '已入库拍照' (user says '入库了'/'拍照了'/'入库拍照了'). When user reports both status and weight in one message ('入库拍照了 1kg'), pass both in one call.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "row": {
+                    "type": "integer",
+                    "description": "1-based row number returned by find_parcel.",
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["未发货", "在途", "已签收", "已入库拍照"],
+                    "description": "New 快递状态. Map from natural language as above.",
+                },
+                "tracking_no": {
+                    "type": "string",
+                    "description": "国内快递单号 if user just provided it.",
+                },
+                "weight_kg": {
+                    "type": "number",
+                    "description": "国内包裹重量 in kg if user just provided it.",
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "Free-form notes to overwrite the 备注 column.",
+                },
+            },
+            "required": ["row"],
+        },
+    },
+    {
+        "name": "update_parcels_by_tracking",
+        "description": "Update ALL parcel rows sharing the same 国内快递单号 (one physical parcel often contains multiple SKUs / multiple sheet rows). Use this when the user reports status / weight for a tracking number — e.g. '9303 入库拍照 1.5kg' or '9303 签收了'. Status and notes apply uniformly to every matched row. total_weight_kg is the carrier-reported weight for the WHOLE parcel and is SPLIT EQUALLY across matched rows (e.g. 1.5kg over 2 rows → 0.75kg each). Always confirm the split back to the user ('1.5kg 平分到 2 件，各 0.75kg'). For NON-equal splits, do NOT call this tool — instead, parse the user's stated ratio/literal weights yourself and make one update_parcel call per row with the computed per-row weight.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tracking_no": {
+                    "type": "string",
+                    "description": "国内快递单号 to match. Substring match against the 国内快递单号 column — users typically refer to the last 4 digits.",
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["未发货", "在途", "已签收", "已入库拍照"],
+                    "description": "New 快递状态 for all matched rows.",
+                },
+                "total_weight_kg": {
+                    "type": "number",
+                    "description": "Total parcel weight reported by the carrier. Split equally across matched rows.",
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "Notes to write into 备注 on every matched row.",
+                },
+            },
+            "required": ["tracking_no"],
+        },
+    },
+    {
+        "name": "settle_shipping",
+        "description": "Stage 2 — call this when the user reports the carrier-consolidated totals: total billing weight (kg) and total shipping cost (RMB). Triggered by messages like '总计费重量 26kg, 运费 750', '结算: 20kg / 700元', '这批 25 公斤 800 块'. Adds a summary row at the bottom of the active tab and writes apportioning formulas to all data rows. Only call once per batch.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "total_billed_weight_kg": {
+                    "type": "number",
+                    "description": "Total billing weight in kg as reported by the carrier.",
+                },
+                "total_shipping_rmb": {
+                    "type": "number",
+                    "description": "Total shipping fee in RMB as reported by the carrier.",
+                },
+            },
+            "required": ["total_billed_weight_kg", "total_shipping_rmb"],
+        },
+    },
+    {
+        "name": "apply_exchange_rate",
+        "description": "Stage 3 — call this when the user provides the RMB/EUR exchange rate for this batch ('汇率 7.8', 'rate 7.85'). Writes the literal rate to column O of every data row plus EUR-conversion formulas. Typically called after settle_shipping but can also be called independently.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "rate": {
+                    "type": "number",
+                    "description": "RMB-per-EUR exchange rate.",
+                },
+            },
+            "required": ["rate"],
+        },
+    },
 ]
 
 
@@ -317,6 +479,42 @@ def _execute_tool(name: str, args: dict[str, Any]) -> Any:
         return {"ok": True, "title": item.title}
     if name == "set_status":
         return _execute_set_status(args["title_substring"], args["status"])
+    if name == "record_parcel":
+        return record_parcel(
+            date=args["date"],
+            item=args["item"],
+            platform=args["platform"],
+            quantity=args["quantity"],
+            unit_price=args.get("unit_price"),
+            total_price=args.get("total_price"),
+            tracking_no=args.get("tracking_no"),
+            weight_kg=args.get("weight_kg"),
+            notes=args.get("notes"),
+        )
+    if name == "find_parcel":
+        return find_parcel(args["query"])
+    if name == "update_parcel":
+        return update_parcel(
+            row=args["row"],
+            status=args.get("status"),
+            tracking_no=args.get("tracking_no"),
+            weight_kg=args.get("weight_kg"),
+            notes=args.get("notes"),
+        )
+    if name == "update_parcels_by_tracking":
+        return update_parcels_by_tracking(
+            tracking_no=args["tracking_no"],
+            status=args.get("status"),
+            total_weight_kg=args.get("total_weight_kg"),
+            notes=args.get("notes"),
+        )
+    if name == "settle_shipping":
+        return settle_shipping(
+            total_billed_weight_kg=args["total_billed_weight_kg"],
+            total_shipping_rmb=args["total_shipping_rmb"],
+        )
+    if name == "apply_exchange_rate":
+        return apply_exchange_rate(args["rate"])
     raise ValueError(f"unknown tool: {name!r}")
 
 
