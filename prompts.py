@@ -122,7 +122,7 @@ Status defaults to `未发货`; 转运渠道 is inferred from the active tab. Do
 
 **Stage 2 — Settle shipping (`settle_shipping`)**: user reports the carrier-consolidated totals — e.g. "总计费重量 26kg, 运费 750", "结算 20kg/700", "这批 25 公斤 800 块". Pass `total_billed_weight_kg` and `total_shipping_rmb`. Adds a summary row and writes apportioning formulas to every data row. Call once per batch — if the user re-states the totals, treat as a correction and warn, do not call again blindly.
 
-**Stage 3 — Apply exchange rate (`apply_exchange_rate`)**: user gives the RMB/EUR rate — "汇率 7.8", "rate 7.85". Pass `rate`. Usually called after Stage 2 but can be independent.
+**Stage 3 — Apply exchange rate (`apply_exchange_rate`)**: user gives the RMB/EUR rate — "汇率 7.8", "rate 7.85". Pass `rate`. Writes to every data row AND to the summary row (so the total EUR cost is visible at the bottom). Usually called after Stage 2 but can be independent.
 
 ### Per-parcel updates
 

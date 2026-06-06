@@ -362,7 +362,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "apply_exchange_rate",
-        "description": "Stage 3 — call this when the user provides the RMB/EUR exchange rate for this batch ('汇率 7.8', 'rate 7.85'). Writes the literal rate to column O of every data row plus EUR-conversion formulas. Typically called after settle_shipping but can also be called independently.",
+        "description": "Stage 3 — call this when the user provides the RMB/EUR exchange rate for this batch ('汇率 7.8', 'rate 7.85'). Writes the literal rate + EUR-conversion formulas to every data row, AND writes the rate + total-EUR formula to the summary row (so the user sees the batch's total EUR cost at the bottom). Typically called after settle_shipping but can also be called independently.",
         "input_schema": {
             "type": "object",
             "properties": {

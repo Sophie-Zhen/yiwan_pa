@@ -159,7 +159,8 @@ def main() -> None:
         print("\n--- apply_exchange_rate(7.8) ---")
         ar = apply_exchange_rate(7.8)
         print(ar)
-        assert ar["rows_updated"] == 4
+        assert ar["data_rows_updated"] == 4
+        assert ar["summary_row_updated"] is True
 
         print("\n--- verify O/P/Q in data rows ---")
         opq = tab.get(
@@ -171,6 +172,11 @@ def main() -> None:
             assert row[0] == 7.8, f"O{row_num}: {row[0]}"
             assert row[1] == f"=N{row_num}/O{row_num}"
             assert row[2] == f"=P{row_num}/D{row_num}"
+
+        print("\n--- verify O + P on summary row ---")
+        op_summary = tab.get(f"O6:P6", value_render_option="FORMULA")
+        print(f"O6:P6 = {op_summary}")
+        assert op_summary == [[7.8, "=N6/O6"]], f"summary O/P wrong: {op_summary}"
 
         print("\nALL ASSERTIONS PASSED")
     finally:

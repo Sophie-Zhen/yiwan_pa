@@ -445,9 +445,15 @@ def settle_shipping(
 
 
 def apply_exchange_rate(rate: float) -> dict:
-    """Stage 3: write exchange rate + EUR-conversion formulas to all data rows."""
+    """Stage 3: write exchange rate + EUR formulas to data rows and summary row.
+
+    Data rows: writes O (rate literal), P (=N/O), Q (=P/D).
+    Summary row (if present): writes O (rate literal) and P (=N/O) so the user
+    sees total EUR cost at the bottom. Q is not written on summary because
+    "EUR per unit count" doesn't carry meaning at the batch level.
+    """
     tab = _active_worksheet()
-    data_rows, _ = _scan_rows(tab)
+    data_rows, summary_row = _scan_rows(tab)
     if not data_rows:
         raise RuntimeError("No data rows to apply exchange rate")
 
@@ -456,6 +462,16 @@ def apply_exchange_rate(rate: float) -> dict:
         cells.append(gspread.cell.Cell(r, COL_EXCHANGE_RATE, rate))
         cells.append(gspread.cell.Cell(r, COL_GRAND_TOTAL_EUR, f"=N{r}/O{r}"))
         cells.append(gspread.cell.Cell(r, COL_EURO_UNIT_PRICE, f"=P{r}/D{r}"))
+    if summary_row is not None:
+        cells.append(gspread.cell.Cell(summary_row, COL_EXCHANGE_RATE, rate))
+        cells.append(
+            gspread.cell.Cell(
+                summary_row, COL_GRAND_TOTAL_EUR, f"=N{summary_row}/O{summary_row}"
+            )
+        )
     tab.update_cells(cells, value_input_option="USER_ENTERED")
 
-    return {"rows_updated": len(data_rows)}
+    return {
+        "data_rows_updated": len(data_rows),
+        "summary_row_updated": summary_row is not None,
+    }
