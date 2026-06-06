@@ -281,7 +281,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "update_parcel",
-        "description": "Update fields on a specific parcel row found via find_parcel. The row argument is the 1-based sheet row number. Status enum (map natural language to these): '未发货' (default after record), '在途' (user says '发货了'/'已发'), '已签收' (user says '签收了'/'到货了'/'拿到了'), '已入库拍照' (user says '入库了'/'拍照了'/'入库拍照了'). When user reports both status and weight in one message ('入库拍照了 1kg'), pass both in one call.",
+        "description": "Update fields on a specific parcel row found via find_parcel. The row argument is the 1-based sheet row number. Status enum (map natural language to these): '未发货' (default after record), '在途' (user says '发货了'/'已发'), '已签收' (user says '签收了'/'到货了'/'拿到了'), '已入库拍照' (user says '入库了'/'拍照了'/'入库拍照了'). When user reports both status and weight in one message ('入库拍照了 1kg'), pass both in one call. AUTO-COUPLING: if weight_kg is set but status is omitted, the tool sets status='已入库拍照' automatically (filling a weight = warehouse-weighing event). Pass status explicitly only if you want a value other than 已入库拍照.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -317,7 +317,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "update_parcels_by_tracking",
-        "description": "Update ALL parcel rows sharing the same 国内快递单号 (one physical parcel often contains multiple SKUs / multiple sheet rows). Use this when the user reports status / weight for a tracking number — e.g. '9303 入库拍照 1.5kg' or '9303 签收了'. Status and notes apply uniformly to every matched row. total_weight_kg is the carrier-reported weight for the WHOLE parcel and is SPLIT EQUALLY across matched rows (e.g. 1.5kg over 2 rows → 0.75kg each). Always confirm the split back to the user ('1.5kg 平分到 2 件，各 0.75kg'). For NON-equal splits, do NOT call this tool — instead, parse the user's stated ratio/literal weights yourself and make one update_parcel call per row with the computed per-row weight.",
+        "description": "Update ALL parcel rows sharing the same 国内快递单号 (one physical parcel often contains multiple SKUs / multiple sheet rows). Use this when the user reports status / weight for a tracking number — e.g. '9303 入库拍照 1.5kg' or '9303 签收了'. Status and notes apply uniformly to every matched row. total_weight_kg is the carrier-reported weight for the WHOLE parcel and is SPLIT EQUALLY across matched rows (e.g. 1.5kg over 2 rows → 0.75kg each). Always confirm the split back to the user ('1.5kg 平分到 2 件，各 0.75kg'). AUTO-COUPLING: if total_weight_kg is set but status is omitted, the tool sets status='已入库拍照' automatically — pass status explicitly only if you want a different value. For NON-equal splits, do NOT call this tool — instead, parse the user's stated ratio/literal weights yourself and make one update_parcel call per row with the computed per-row weight.",
         "input_schema": {
             "type": "object",
             "properties": {

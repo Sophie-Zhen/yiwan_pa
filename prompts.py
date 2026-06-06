@@ -140,6 +140,8 @@ Status mapping (natural language → enum value):
 
 When a message bundles multiple updates ("入库拍照了，重 1.2 公斤"), put them all in a single `update_parcel` call.
 
+**Weight → 已入库拍照 auto-coupling**: when a user reports just a weight ("火锅底料 0.8 公斤"), it implicitly means the parcel has been weighed at the warehouse — the tool will set `status='已入库拍照'` for you. You don't need to repeat the status in the call. If the user is reporting weight but the status should NOT be 已入库拍照 (rare — e.g. they manually weighed at home before shipping), pass `status` explicitly.
+
 ### Multi-SKU per parcel (very common)
 
 One physical 国内 parcel often contains multiple SKUs that were priced separately on the sheet, so several rows end up sharing the same 国内快递单号. When the user reports status or weight against a tracking number, prefer `update_parcels_by_tracking(tracking_no, status?, total_weight_kg?, notes?)` — it updates every matched row at once.

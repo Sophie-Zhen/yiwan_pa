@@ -102,6 +102,12 @@ def main() -> None:
         upd = update_parcel(r2["row"], status="已入库拍照", weight_kg=3.82)
         print(upd)
 
+        print("\n--- update_parcel: weight only auto-couples to 已入库拍照 ---")
+        upd = update_parcel(r1["row"], weight_kg=0.6)
+        print(upd)
+        assert upd["values"][COL_STATUS_IDX] == "已入库拍照", upd
+        assert float(upd["values"][COL_DOMESTIC_WEIGHT_IDX]) == 0.6, upd
+
         print("\n--- multi-SKU: assign same tracking to r3 and r4 (record r4 first) ---")
         r4 = record_parcel(
             "2026-06-05", "测试同包裹SKU-B", "pdd", 1, unit_price=10.0
@@ -111,17 +117,16 @@ def main() -> None:
         update_parcel(r3["row"], tracking_no=shared_tracking)
         update_parcel(r4["row"], tracking_no=shared_tracking)
 
-        print(f"\n--- update_parcels_by_tracking('{shared_tracking}', status=已入库拍照, total_weight_kg=1.5) ---")
+        print(f"\n--- update_parcels_by_tracking('{shared_tracking}', total_weight_kg=1.5) [no status; auto-couples] ---")
         result = update_parcels_by_tracking(
             tracking_no=shared_tracking,
-            status="已入库拍照",
             total_weight_kg=1.5,
         )
         print(result)
         assert result["rows_updated"] == [r3["row"], r4["row"]]
         assert result["per_row_weight_kg"] == 0.75
 
-        print("\n--- verify both rows got status + 0.75kg each ---")
+        print("\n--- verify both rows got status=已入库拍照 (auto-coupled) + 0.75kg each ---")
         for row_num in [r3["row"], r4["row"]]:
             row_vals = tab.row_values(row_num)
             assert row_vals[COL_STATUS_IDX] == "已入库拍照", row_vals

@@ -251,7 +251,15 @@ def update_parcel(
     weight_kg: float | None = None,
     notes: str | None = None,
 ) -> dict:
-    """Update one or more fields on a data row."""
+    """Update one or more fields on a data row.
+
+    Auto-couples weight → '已入库拍照': filling a weight is the carrier-side
+    warehouse-weighing event, which by definition transitions the parcel
+    into 已入库拍照. If the caller also passes an explicit status, that
+    explicit value wins.
+    """
+    if weight_kg is not None and status is None:
+        status = "已入库拍照"
     if status is not None and status not in VALID_STATUSES:
         raise ValueError(
             f"Invalid status {status!r}. Must be one of: {sorted(VALID_STATUSES)}"
@@ -352,6 +360,10 @@ def update_parcels_by_tracking(
     """
     if status is None and total_weight_kg is None and notes is None:
         raise ValueError("nothing to update; provide status, total_weight_kg, or notes")
+    if total_weight_kg is not None and status is None:
+        # Same auto-coupling as update_parcel: warehouse-weighing event
+        # implies 已入库拍照 unless caller explicitly passed a different status.
+        status = "已入库拍照"
     if status is not None and status not in VALID_STATUSES:
         raise ValueError(
             f"Invalid status {status!r}. Must be one of: {sorted(VALID_STATUSES)}"
