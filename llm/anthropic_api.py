@@ -23,6 +23,7 @@ Notes on configuration:
   helps. Off by default on Opus 4.7; turning it on gives headroom for harder
   intents without forcing thinking on simple ones.
 """
+import base64
 import json
 import logging
 from datetime import datetime
@@ -58,6 +59,12 @@ from .base import LLMBackend
 logger = logging.getLogger(__name__)
 
 MODEL = "claude-opus-4-7"
+# Vision calls swap to Sonnet 4.6 — ~5x cheaper input price ($3/M vs $15/M)
+# with no quality loss observed on parcel screenshots in scripts/spike_vision.py.
+# Image tokens (~1700 per phone screenshot) don't cache, so Opus pricing on
+# them would noticeably bump the bill at the user's expected ~40 screenshots
+# per shipment batch.
+VISION_MODEL = "claude-sonnet-4-6"
 # 16000 is the Anthropic-recommended default for non-streaming. It's a *cap*,
 # not a target — short replies still cost only the tokens they actually use.
 # Lowballing this (e.g. 1024) truncates batch operations: a single user message
@@ -608,17 +615,39 @@ class AnthropicBackend(LLMBackend):
         user_message: str,
         system_prompt: str = "",
         history: list[dict[str, str]] | None = None,
+        images: list[bytes] | None = None,
     ) -> str:
         # Conversation history (if any) goes at the front of the messages
         # list so the model sees prior turns as context for the new one.
         # The agent loop appends its own assistant + tool_result blocks on
         # top of this during a single chat() call.
         messages: list[dict[str, Any]] = list(history) if history else []
-        messages.append({"role": "user", "content": user_message})
+
+        if images:
+            # Per-call model swap: vision goes to Sonnet 4.6 (cheaper, equal
+            # quality on parcel screenshots per the spike).
+            model = VISION_MODEL
+            content: list[dict[str, Any]] = []
+            for img in images:
+                content.append(
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": base64.b64encode(img).decode("ascii"),
+                        },
+                    }
+                )
+            content.append({"type": "text", "text": user_message})
+            messages.append({"role": "user", "content": content})
+        else:
+            model = self.model
+            messages.append({"role": "user", "content": user_message})
 
         for turn in range(MAX_LOOP_TURNS):
             kwargs: dict[str, Any] = {
-                "model": self.model,
+                "model": model,
                 "max_tokens": MAX_TOKENS,
                 "tools": TOOLS,
                 "messages": messages,

@@ -5,10 +5,13 @@ call spawns a fresh, non-interactive `claude -p` process. Trade-off: 1-3s
 startup overhead per call, no streaming, no token usage telemetry — but zero
 extra cost on top of an existing subscription.
 """
+import logging
 import pathlib
 import subprocess
 
 from .base import LLMBackend
+
+logger = logging.getLogger(__name__)
 
 # Project root = parent of the `llm/` package directory. Subprocesses run
 # with this as cwd so file paths in the system prompt (e.g. data/inbox.md)
@@ -29,6 +32,7 @@ class ClaudeCodeBackend(LLMBackend):
         user_message: str,
         system_prompt: str = "",
         history: list[dict[str, str]] | None = None,
+        images: list[bytes] | None = None,
     ) -> str:
         # `history` is accepted to satisfy the LLMBackend interface but
         # intentionally ignored in v0.1.1 — see
@@ -37,6 +41,13 @@ class ClaudeCodeBackend(LLMBackend):
         # If we want true multi-turn here later, the path is `claude -p
         # --resume <session-id>` keyed on chat_id.
         del history
+        if images:
+            logger.warning(
+                "ClaudeCodeBackend received %d image(s) but vision is not "
+                "implemented here; dropping. Switch LLM_BACKEND=anthropic to "
+                "use vision.",
+                len(images),
+            )
 
         cmd = [
             "claude",

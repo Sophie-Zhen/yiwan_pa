@@ -14,6 +14,7 @@ class LLMBackend(ABC):
         user_message: str,
         system_prompt: str = "",
         history: list[dict[str, str]] | None = None,
+        images: list[bytes] | None = None,
     ) -> str:
         """Send a single user message and return the assistant's reply.
 
@@ -27,6 +28,10 @@ class LLMBackend(ABC):
                 first. Backends that support multi-turn use this as the
                 messages prefix; backends without multi-turn support may
                 ignore it. None or empty means stateless (no prior context).
+            images: optional list of image bytes (JPEG/PNG) to send alongside
+                the user message. Backends without vision support log a
+                warning and ignore. Image bytes are NOT persisted in history
+                — only the text user_message survives across turns.
 
         See docs/decisions/0001-conversation-history.md for the storage
         layer that produces `history`.

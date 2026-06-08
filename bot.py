@@ -89,10 +89,13 @@ def _is_authorized(update: Update) -> bool:
 async def _ask_llm(
     user_message: str,
     history: list[dict[str, str]] | None = None,
+    images: list[bytes] | None = None,
 ) -> str:
     """Run a single LLM round-trip with the personal-assistant system prompt."""
     system_prompt = render_personal_assistant(USER_NAME)
-    return await asyncio.to_thread(backend.chat, user_message, system_prompt, history)
+    return await asyncio.to_thread(
+        backend.chat, user_message, system_prompt, history, images
+    )
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -123,6 +126,52 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Persist the ORIGINAL message (not prefixed) so history files stay
     # human-readable and prior turns don't accumulate stale [Now: ...] tags.
     append_turn(chat_id, text, reply)
+
+    logger.info("bot: %s", reply[:200])
+    await update.message.reply_text(reply)
+
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Image messages — typically a parcel order screenshot or warehouse
+    arrival notification. The caption (if any) gives the LLM hints about
+    platform / context; without one, the LLM still has to identify the type
+    from the image.
+    """
+    chat_id = update.effective_chat.id
+    if not _is_authorized(update):
+        logger.warning("unauthorized chat %s blocked (photo)", chat_id)
+        return
+
+    # photo is a list of PhotoSize at increasing resolutions; last = largest.
+    # Telegram already downscales user photos to ~1280px wide for `photo`
+    # messages, so even the largest is reasonably sized for vision.
+    photo = update.message.photo[-1]
+    file = await context.bot.get_file(photo.file_id)
+    image_bytes = bytes(await file.download_as_bytearray())
+    caption = (update.message.caption or "").strip()
+
+    logger.info(
+        "user (chat %s, photo %d bytes, caption=%r)",
+        chat_id,
+        len(image_bytes),
+        caption,
+    )
+
+    history = read_history(chat_id)
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    user_message = f"[Now: {now_str}] [图片] {caption}" if caption else f"[Now: {now_str}] [图片]"
+
+    try:
+        reply = await _ask_llm(user_message, history=history, images=[image_bytes])
+    except Exception as exc:
+        logger.exception("photo backend.chat failed")
+        reply = f"[error] {exc}"
+
+    # History stores the caption + [图片] marker so future turns know an image
+    # was sent, but NOT the bytes — they would balloon the JSONL file and the
+    # model can't re-look at past images on subsequent turns anyway.
+    history_text = f"[图片] {caption}" if caption else "[图片]"
+    append_turn(chat_id, history_text, reply)
 
     logger.info("bot: %s", reply[:200])
     await update.message.reply_text(reply)
@@ -286,6 +335,7 @@ def main() -> None:
     app.add_handler(CommandHandler("todos", cmd_todos))
     app.add_handler(CommandHandler("active", cmd_active))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     if app.job_queue is None:
         logger.warning(
