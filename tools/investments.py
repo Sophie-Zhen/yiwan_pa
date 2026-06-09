@@ -4,12 +4,16 @@ Two tabs in the INVESTMENTS_SHEET_ID spreadsheet:
 
 「计划」(plan) — small, ~5-10 rows. One row per active 定投 contract.
     A 基金名称       | input
-    B 月扣款日       | input (1-31)
-    C 计划金额       | input (RMB per debit)
-    D 起始日         | input (YYYY-MM-DD)
-    E 状态           | one of VALID_PLAN_STATUSES
-    F 上次提醒日期   | written by scheduler at T-1
-    G 备注           | input
+    B 频率           | one of VALID_FREQUENCIES (monthly / weekly / irregular)
+    C 扣款日         | input — depends on frequency:
+                        monthly  → 1-31 (day of month)
+                        weekly   → 1-7 (ISO weekday, 1=Mon, 4=Thu, 7=Sun)
+                        irregular → empty
+    D 计划金额       | input (RMB per debit)
+    E 起始日         | input (YYYY-MM-DD)
+    F 状态           | one of VALID_PLAN_STATUSES
+    G 上次提醒日期   | written by scheduler at T-1
+    H 备注           | input
 
 「流水」(ledger) — append-only. One row per debit event.
     A 扣款日期       | input (YYYY-MM-DD)
@@ -37,14 +41,20 @@ load_dotenv()
 
 PLAN_TAB = "计划"
 PLAN_COL_FUND = 1
-PLAN_COL_DAY = 2
-PLAN_COL_AMOUNT = 3
-PLAN_COL_START = 4
-PLAN_COL_STATUS = 5
-PLAN_COL_LAST_REMINDED = 6
-PLAN_COL_NOTES = 7
-PLAN_NUM_COLS = 7
-PLAN_LAST_COL = "G"
+PLAN_COL_FREQUENCY = 2
+PLAN_COL_DAY = 3
+PLAN_COL_AMOUNT = 4
+PLAN_COL_START = 5
+PLAN_COL_STATUS = 6
+PLAN_COL_LAST_REMINDED = 7
+PLAN_COL_NOTES = 8
+PLAN_NUM_COLS = 8
+PLAN_LAST_COL = "H"
+
+FREQUENCY_MONTHLY = "monthly"
+FREQUENCY_WEEKLY = "weekly"
+FREQUENCY_IRREGULAR = "irregular"
+VALID_FREQUENCIES = {FREQUENCY_MONTHLY, FREQUENCY_WEEKLY, FREQUENCY_IRREGULAR}
 
 LEDGER_TAB = "流水"
 LEDGER_COL_DEBIT_DATE = 1
@@ -91,21 +101,46 @@ def _find_first_empty_row(tab: gspread.Worksheet, key_col: int) -> int:
 
 def add_investment_plan(
     fund: str,
-    day_of_month: int,
+    frequency: str,
     planned_amount: float,
     start_date: str,
+    day_of_month: int | None = None,
+    day_of_week: int | None = None,
     notes: str | None = None,
 ) -> dict:
-    """Add a new 定投 plan. status defaults to 'active'."""
-    if not 1 <= day_of_month <= 31:
-        raise ValueError(f"day_of_month must be 1-31, got {day_of_month}")
+    """Add a new 定投 plan. status defaults to 'active'.
+
+    frequency selects which schedule field is required:
+      - 'monthly'   → day_of_month required (1-31), day_of_week ignored
+      - 'weekly'    → day_of_week required (1-7, ISO: 1=Mon, 7=Sun)
+      - 'irregular' → neither used; no auto-reminder will fire
+    """
+    if frequency not in VALID_FREQUENCIES:
+        raise ValueError(
+            f"Invalid frequency {frequency!r}. Must be one of: {sorted(VALID_FREQUENCIES)}"
+        )
+
+    schedule_day: int | str = ""
+    if frequency == FREQUENCY_MONTHLY:
+        if day_of_month is None or not 1 <= day_of_month <= 31:
+            raise ValueError(
+                f"frequency='monthly' requires day_of_month 1-31, got {day_of_month}"
+            )
+        schedule_day = day_of_month
+    elif frequency == FREQUENCY_WEEKLY:
+        if day_of_week is None or not 1 <= day_of_week <= 7:
+            raise ValueError(
+                f"frequency='weekly' requires day_of_week 1-7 (ISO), got {day_of_week}"
+            )
+        schedule_day = day_of_week
 
     tab = _plan_tab()
     target_row = _find_first_empty_row(tab, PLAN_COL_FUND)
 
     row = [""] * PLAN_NUM_COLS
     row[PLAN_COL_FUND - 1] = fund
-    row[PLAN_COL_DAY - 1] = day_of_month
+    row[PLAN_COL_FREQUENCY - 1] = frequency
+    row[PLAN_COL_DAY - 1] = schedule_day
     row[PLAN_COL_AMOUNT - 1] = planned_amount
     row[PLAN_COL_START - 1] = start_date
     row[PLAN_COL_STATUS - 1] = "active"
@@ -117,11 +152,17 @@ def add_investment_plan(
         values=[row],
         value_input_option="USER_ENTERED",
     )
-    return {"row": target_row, "fund": fund}
+    return {"row": target_row, "fund": fund, "frequency": frequency}
 
 
 def list_investment_plans(status_filter: str | None = "active") -> list[dict]:
-    """List plans. status_filter=None means all; default 'active'."""
+    """List plans. status_filter=None means all; default 'active'.
+
+    The schedule_day cell holds either a day-of-month (1-31), a day-of-week
+    (1-7 ISO), or empty (irregular). This function splits it into
+    day_of_month and day_of_week fields based on the row's frequency so
+    callers don't have to interpret the polymorphic cell themselves.
+    """
     tab = _plan_tab()
     all_values = tab.get_all_values()
     plans: list[dict] = []
@@ -132,10 +173,21 @@ def list_investment_plans(status_filter: str | None = "active") -> list[dict]:
         status = row[PLAN_COL_STATUS - 1] if len(row) >= PLAN_COL_STATUS else ""
         if status_filter is not None and status != status_filter:
             continue
+        frequency = row[PLAN_COL_FREQUENCY - 1] if len(row) >= PLAN_COL_FREQUENCY else ""
+        schedule_day_raw = row[PLAN_COL_DAY - 1] if len(row) >= PLAN_COL_DAY else ""
+        day_of_month: int | None = None
+        day_of_week: int | None = None
+        if frequency == FREQUENCY_MONTHLY and schedule_day_raw:
+            day_of_month = int(schedule_day_raw)
+        elif frequency == FREQUENCY_WEEKLY and schedule_day_raw:
+            day_of_week = int(schedule_day_raw)
+
         plans.append({
             "row": i,
             "fund": fund,
-            "day_of_month": row[PLAN_COL_DAY - 1] if len(row) >= PLAN_COL_DAY else "",
+            "frequency": frequency,
+            "day_of_month": day_of_month,
+            "day_of_week": day_of_week,
             "planned_amount": row[PLAN_COL_AMOUNT - 1] if len(row) >= PLAN_COL_AMOUNT else "",
             "start_date": row[PLAN_COL_START - 1] if len(row) >= PLAN_COL_START else "",
             "status": status,

@@ -195,8 +195,12 @@ Trigger words: "定投", "基金", "扣款", "申购", "确认份额", or a bank
 
 ### Plan management
 
-- "加一条定投：易方达蓝筹混合 月10号扣 500，6月1号起" → `add_investment_plan(fund='易方达蓝筹混合', day_of_month=10, planned_amount=500, start_date='2026-06-01')`
-- "我现在有哪些定投" / "列出我的定投计划" → `list_investment_plans()`
+A plan's `frequency` is one of `monthly` / `weekly` / `irregular`. Reminders only fire for monthly and weekly plans; irregular plans never auto-trigger (Sophie forwards the debit text when it happens).
+
+- "加一条定投：易方达蓝筹混合 每月 10 号扣 500，6月1号起" → `add_investment_plan(fund='易方达蓝筹混合', frequency='monthly', day_of_month=10, planned_amount=500, start_date='2026-06-01')`
+- "富国全球科技 每周四扣 1000，6月4号起" → `add_investment_plan(fund='富国全球科技', frequency='weekly', day_of_week=4, planned_amount=1000, start_date='2026-06-04')` — weekday mapping: 周一=1 / 周二=2 / 周三=3 / 周四=4 / 周五=5 / 周六=6 / 周日=7
+- "思远定投全球好资产 信号触发，每次 2500" → `add_investment_plan(fund='思远定投全球好资产', frequency='irregular', planned_amount=2500, start_date=<today or stated>)` — no schedule day needed
+- "我现在有哪些定投" / "列出我的定投计划" → `list_investment_plans()`. When reporting back, translate `day_of_week=4` to '每周四' / `day_of_month=10` to '每月 10 号'; mention `irregular` plans separately as '不定期: <fund> 每次 X 元'.
 - "暂停 X 定投" → `update_plan_status(fund=X, status='paused')`
 - "停掉 X" / "X 不投了" → `update_plan_status(fund=X, status='ended')`
 - "继续 X" → `update_plan_status(fund=X, status='active')`

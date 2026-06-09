@@ -52,12 +52,14 @@ def main() -> None:
         print("\n=== setup: add 2 test plans ===")
         p1 = inv.add_investment_plan(
             fund=TEST_FUND_A,
+            frequency="monthly",
             day_of_month=4,
             planned_amount=1000,
             start_date="2026-05-01",
         )
         p2 = inv.add_investment_plan(
             fund=TEST_FUND_B,
+            frequency="monthly",
             day_of_month=10,
             planned_amount=500,
             start_date="2026-05-01",

@@ -37,31 +37,75 @@ def main() -> None:
     ledger_rows: list[int] = []
 
     try:
-        print("\n=== add_investment_plan ===")
+        print("\n=== add_investment_plan (3 frequencies) ===")
         p1 = inv.add_investment_plan(
             fund="TEST_易方达蓝筹混合",
+            frequency="monthly",
             day_of_month=10,
             planned_amount=500,
             start_date="2026-06-01",
-            notes="smoke test",
+            notes="smoke test monthly",
         )
         print(p1)
         plan_rows.append(p1["row"])
+        assert p1["frequency"] == "monthly"
 
         p2 = inv.add_investment_plan(
             fund="TEST_全球科技基金",
-            day_of_month=5,
+            frequency="weekly",
+            day_of_week=4,
             planned_amount=1000,
             start_date="2026-06-01",
         )
         print(p2)
         plan_rows.append(p2["row"])
+        assert p2["frequency"] == "weekly"
+
+        p3 = inv.add_investment_plan(
+            fund="TEST_思远不定期",
+            frequency="irregular",
+            planned_amount=2500,
+            start_date="2026-06-01",
+        )
+        print(p3)
+        plan_rows.append(p3["row"])
+        assert p3["frequency"] == "irregular"
+
+        print("\n=== validation errors ===")
+        try:
+            inv.add_investment_plan(
+                fund="bad", frequency="monthly", planned_amount=100, start_date="2026-06-01"
+            )
+            assert False, "should have raised — monthly without day_of_month"
+        except ValueError as e:
+            print(f"ok: monthly w/o day_of_month → {e}")
+        try:
+            inv.add_investment_plan(
+                fund="bad", frequency="weekly", planned_amount=100, start_date="2026-06-01"
+            )
+            assert False, "should have raised — weekly without day_of_week"
+        except ValueError as e:
+            print(f"ok: weekly w/o day_of_week → {e}")
+        try:
+            inv.add_investment_plan(
+                fund="bad", frequency="weekly", day_of_week=8, planned_amount=100, start_date="2026-06-01"
+            )
+            assert False, "should have raised — day_of_week=8 out of range"
+        except ValueError as e:
+            print(f"ok: day_of_week=8 → {e}")
 
         print("\n=== list_investment_plans (active) ===")
         actives = inv.list_investment_plans()
-        for p in actives:
+        test_plans = [p for p in actives if p["fund"].startswith("TEST_")]
+        for p in test_plans:
             print(p)
-        assert len([p for p in actives if p["fund"].startswith("TEST_")]) == 2
+        assert len(test_plans) == 3
+        monthly = next(p for p in test_plans if p["frequency"] == "monthly")
+        weekly = next(p for p in test_plans if p["frequency"] == "weekly")
+        irregular = next(p for p in test_plans if p["frequency"] == "irregular")
+        assert monthly["day_of_month"] == 10 and monthly["day_of_week"] is None
+        assert weekly["day_of_week"] == 4 and weekly["day_of_month"] is None
+        assert irregular["day_of_month"] is None and irregular["day_of_week"] is None
 
         print("\n=== update_plan_status (pause one) ===")
         r = inv.update_plan_status(fund="TEST_易方达蓝筹混合", status="paused")
