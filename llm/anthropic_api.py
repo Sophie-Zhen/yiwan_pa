@@ -44,6 +44,15 @@ from storage.markdown import (
     skip_remaining_alerts,
     update_inbox_item,
 )
+from tools.investments import (
+    add_investment_plan,
+    find_investment,
+    investment_summary,
+    list_investment_plans,
+    record_investment,
+    update_investment_confirmation,
+    update_plan_status,
+)
 from tools.parcels import (
     apply_exchange_rate,
     find_parcel,
@@ -381,6 +390,180 @@ TOOLS: list[dict[str, Any]] = [
             "required": ["rate"],
         },
     },
+    # === Fund 定投 (recurring investment) tools ===
+    # These write to a SEPARATE Google Sheet (INVESTMENTS_SHEET_ID), not the
+    # parcels sheet. Two tabs: 计划 (plans) and 流水 (ledger). Use when the user
+    # is talking about 基金定投 — adding a plan, recording a debit/confirmation
+    # from a bank text, or asking '累计投了多少'.
+    {
+        "name": "add_investment_plan",
+        "description": "Add a new 基金定投 plan to the 计划 tab. Use when the user says e.g. '加一条定投：易方达蓝筹混合，月 10 号扣 500，6月1号起'. Plan status defaults to 'active'. day_of_month is 1-31 (the bank-debit day of each month). This records the SCHEDULE, not an actual investment — actual debits go through record_investment.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "fund": {
+                    "type": "string",
+                    "description": "Fund name as the user gave it (e.g. '易方达蓝筹混合').",
+                },
+                "day_of_month": {
+                    "type": "integer",
+                    "description": "Day of month the bank debits, 1-31.",
+                },
+                "planned_amount": {
+                    "type": "number",
+                    "description": "Planned debit amount in RMB per month.",
+                },
+                "start_date": {
+                    "type": "string",
+                    "description": "Plan start date in YYYY-MM-DD format.",
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "Optional free-form notes.",
+                },
+            },
+            "required": ["fund", "day_of_month", "planned_amount", "start_date"],
+        },
+    },
+    {
+        "name": "list_investment_plans",
+        "description": "List 定投 plans. Use this to (a) answer 'what plans do I have', (b) match a fund name from a bank text against active plans before calling record_investment, (c) get planned_amount when the user forwards a debit text. Default returns only active plans; pass status_filter=null to include paused/ended too.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "status_filter": {
+                    "type": "string",
+                    "enum": ["active", "paused", "ended"],
+                    "description": "Filter by plan status. Omit (or null in code) to return all plans.",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "update_plan_status",
+        "description": "Change a plan's status. Use when the user says '暂停 X 的定投' (status='paused'), '继续 X' (status='active'), or '停掉 X' (status='ended'). Matches by exact fund name — call list_investment_plans first if you're not sure of the exact stored name.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "fund": {
+                    "type": "string",
+                    "description": "Exact fund name as stored in 计划.",
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["active", "paused", "ended"],
+                    "description": "New plan status.",
+                },
+            },
+            "required": ["fund", "status"],
+        },
+    },
+    {
+        "name": "record_investment",
+        "description": "Upsert a debit event into the 流水 tab, keyed by (debit_date, fund). If a row already exists for that combination it is updated in place; non-None args overwrite, omitted args preserve existing values. Otherwise a new row is inserted. Use this whenever the user forwards a bank text — DO NOT call find_investment first to dedup, the tool handles it. Workflow: (1) call list_investment_plans to map the fund mentioned in the text to its exact stored name and get planned_amount; (2) call record_investment with whatever fields the text contained — debit-only texts pass A-D and get status '已扣款'; consolidated texts pass A-F and get status '已确认'; a confirmation-for-an-earlier-debit text also passes A-F and the upsert lands on the existing pending row, bumping it to '已确认'. The result includes operation='inserted' or 'updated' so you can phrase the reply correctly.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "debit_date": {
+                    "type": "string",
+                    "description": "Debit date in YYYY-MM-DD format (when the bank pulled the money).",
+                },
+                "fund": {
+                    "type": "string",
+                    "description": "Fund name. Should match a plan name — call list_investment_plans first if unsure.",
+                },
+                "planned_amount": {
+                    "type": "number",
+                    "description": "Planned debit amount in RMB (copy from the matching plan).",
+                },
+                "actual_amount": {
+                    "type": "number",
+                    "description": "Actual debited amount in RMB (from the bank text).",
+                },
+                "confirm_date": {
+                    "type": "string",
+                    "description": "Share-confirmation date in YYYY-MM-DD format. Omit if not yet known.",
+                },
+                "shares": {
+                    "type": "number",
+                    "description": "Confirmed shares (份额). Omit if not yet known.",
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["已扣款", "已确认", "已跳过", "失败"],
+                    "description": "Override status. Usually omitted — defaults to '已确认' if confirm_date+shares are present, otherwise '已扣款'.",
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "Optional free-form notes.",
+                },
+            },
+            "required": ["debit_date", "fund", "planned_amount", "actual_amount"],
+        },
+    },
+    {
+        "name": "find_investment",
+        "description": "Search the 流水 tab. Use to (a) locate the row to update when the user forwards a share-confirmation text for a previously-recorded debit (use pending_only=true), (b) verify a debit isn't already recorded before inserting. fund is substring match (case-insensitive); debit_date is exact.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "debit_date": {
+                    "type": "string",
+                    "description": "Exact match on 扣款日期 (YYYY-MM-DD).",
+                },
+                "fund": {
+                    "type": "string",
+                    "description": "Substring of fund name (case-insensitive).",
+                },
+                "pending_only": {
+                    "type": "boolean",
+                    "description": "If true, return only rows with status='已扣款' (awaiting share confirmation).",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "update_investment_confirmation",
+        "description": "Fill in 确认日期 and 确认份额 on an existing 流水 row, and set status='已确认'. Use when the user forwards a share-confirmation text for a debit already recorded as '已扣款'. Find the row first with find_investment(pending_only=true), then pass its row number here.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "row": {
+                    "type": "integer",
+                    "description": "1-based row number from find_investment.",
+                },
+                "confirm_date": {
+                    "type": "string",
+                    "description": "Share-confirmation date in YYYY-MM-DD format.",
+                },
+                "shares": {
+                    "type": "number",
+                    "description": "Confirmed shares (份额).",
+                },
+            },
+            "required": ["row", "confirm_date", "shares"],
+        },
+    },
+    {
+        "name": "investment_summary",
+        "description": "Aggregate totals over the 流水 tab. Use to answer '累计投了多少', '今年定投花了多少', 'X 基金投了多少'. Returns total_debited_rmb, total_shares_confirmed (only counts rows with status='已确认'), rows_count, pending_confirmations_count (rows still awaiting 份额), and a by_fund breakdown. Skipped/failed rows are excluded from totals. DO NOT estimate from memory — always call this tool.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "fund": {
+                    "type": "string",
+                    "description": "Optional exact fund name filter.",
+                },
+                "year": {
+                    "type": "integer",
+                    "description": "Optional year filter (matches YYYY prefix of 扣款日期).",
+                },
+            },
+            "required": [],
+        },
+    },
 ]
 
 
@@ -530,6 +713,43 @@ def _execute_tool(name: str, args: dict[str, Any]) -> Any:
         )
     if name == "apply_exchange_rate":
         return apply_exchange_rate(args["rate"])
+    if name == "add_investment_plan":
+        return add_investment_plan(
+            fund=args["fund"],
+            day_of_month=args["day_of_month"],
+            planned_amount=args["planned_amount"],
+            start_date=args["start_date"],
+            notes=args.get("notes"),
+        )
+    if name == "list_investment_plans":
+        return list_investment_plans(status_filter=args.get("status_filter", "active"))
+    if name == "update_plan_status":
+        return update_plan_status(fund=args["fund"], status=args["status"])
+    if name == "record_investment":
+        return record_investment(
+            debit_date=args["debit_date"],
+            fund=args["fund"],
+            planned_amount=args["planned_amount"],
+            actual_amount=args["actual_amount"],
+            confirm_date=args.get("confirm_date"),
+            shares=args.get("shares"),
+            status=args.get("status"),
+            notes=args.get("notes"),
+        )
+    if name == "find_investment":
+        return find_investment(
+            debit_date=args.get("debit_date"),
+            fund=args.get("fund"),
+            pending_only=args.get("pending_only", False),
+        )
+    if name == "update_investment_confirmation":
+        return update_investment_confirmation(
+            row=args["row"],
+            confirm_date=args["confirm_date"],
+            shares=args["shares"],
+        )
+    if name == "investment_summary":
+        return investment_summary(fund=args.get("fund"), year=args.get("year"))
     raise ValueError(f"unknown tool: {name!r}")
 
 
