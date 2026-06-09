@@ -36,43 +36,88 @@ load_dotenv()
 
 def test_should_remind() -> None:
     print("\n=== _should_remind ===")
-    # Normal: today is 9, tomorrow is 10, plan day=10 → fire
-    assert sched._should_remind(10, date(2026, 6, 9))
-    # No match: today is 8, tomorrow is 9, plan day=10 → no
-    assert not sched._should_remind(10, date(2026, 6, 8))
+
+    def monthly(day: int) -> dict:
+        return {"frequency": "monthly", "day_of_month": day, "day_of_week": None}
+
+    def weekly(day: int) -> dict:
+        return {"frequency": "weekly", "day_of_month": None, "day_of_week": day}
+
+    def irregular() -> dict:
+        return {"frequency": "irregular", "day_of_month": None, "day_of_week": None}
+
+    # --- monthly ---
+    assert sched._should_remind(monthly(10), date(2026, 6, 9))
+    assert not sched._should_remind(monthly(10), date(2026, 6, 8))
     # Day 1 plan, today is last day of month → fire
-    assert sched._should_remind(1, date(2026, 5, 31))
-    assert sched._should_remind(1, date(2026, 6, 30))
-    # Feb roll: plan day=31, today=Feb 27 (non-leap), tomorrow=Feb 28=eff(31,28)=28 → fire
-    assert sched._should_remind(31, date(2027, 2, 27))
-    # Feb roll leap year: plan day=31, today=Feb 28, tomorrow=Feb 29=eff(31,29)=29 → fire
-    assert sched._should_remind(31, date(2028, 2, 28))
-    # Feb edge: plan day=31, today=Feb 28 in non-leap, tomorrow=Mar 1 → no
-    assert not sched._should_remind(31, date(2027, 2, 28))
+    assert sched._should_remind(monthly(1), date(2026, 5, 31))
+    assert sched._should_remind(monthly(1), date(2026, 6, 30))
+    # Feb roll non-leap: plan day=31, today=Feb 27, tomorrow=Feb 28=eff(31,28)=28 → fire
+    assert sched._should_remind(monthly(31), date(2027, 2, 27))
+    # Feb roll leap: plan day=31, today=Feb 28, tomorrow=Feb 29 → fire
+    assert sched._should_remind(monthly(31), date(2028, 2, 28))
+    # Feb edge: plan day=31, today=Feb 28 non-leap, tomorrow=Mar 1 → no
+    assert not sched._should_remind(monthly(31), date(2027, 2, 28))
     # Plan day=30 in Feb non-leap: today=Feb 27, tomorrow=Feb 28=eff(30,28)=28 → fire
-    assert sched._should_remind(30, date(2027, 2, 27))
-    print("ok: _should_remind passed all cases")
+    assert sched._should_remind(monthly(30), date(2027, 2, 27))
+
+    # --- weekly ---
+    # 2026-06-10 is a Wednesday (isoweekday=3). Tomorrow's day_of_week needs to match.
+    # Take a known date pair: 2026-06-09 (Tue) → tomorrow 2026-06-10 (Wed, ISO=3)
+    assert sched._should_remind(weekly(3), date(2026, 6, 9))
+    # Same date, plan day_of_week=4 → no
+    assert not sched._should_remind(weekly(4), date(2026, 6, 9))
+    # 2026-06-10 (Wed) → tomorrow 2026-06-11 (Thu, ISO=4) → weekly(4) fires
+    assert sched._should_remind(weekly(4), date(2026, 6, 10))
+    # 2026-06-13 (Sat) → tomorrow 2026-06-14 (Sun, ISO=7) → weekly(7) fires
+    assert sched._should_remind(weekly(7), date(2026, 6, 13))
+    # 2026-06-14 (Sun) → tomorrow 2026-06-15 (Mon, ISO=1) → weekly(1) fires
+    assert sched._should_remind(weekly(1), date(2026, 6, 14))
+
+    # --- irregular ---
+    # Never fires regardless of date
+    assert not sched._should_remind(irregular(), date(2026, 6, 9))
+    assert not sched._should_remind(irregular(), date(2026, 6, 10))
+
+    print("ok: _should_remind passed all cases (monthly + weekly + irregular)")
 
 
 async def test_scan_once_mock() -> None:
-    print("\n=== _scan_once with mock send ===")
+    """Exercises all 3 frequencies in one scan: a monthly + a weekly plan
+    that both come due tomorrow should fire; an irregular plan should not.
+    """
+    print("\n=== _scan_once with mock send (monthly + weekly + irregular) ===")
     if sched.USER_CHAT_ID is None:
         print("[skip] TELEGRAM_USER_CHAT_ID not set; can't run scan path")
         return
 
     today = date.today()
     tomorrow = today + timedelta(days=1)
-    # Edge: if tomorrow is end-of-month, set day_of_month = tomorrow.day; works.
-    plan_day = tomorrow.day
 
-    plan = inv.add_investment_plan(
-        fund="TEST_SCHED_基金",
-        day_of_month=plan_day,
+    p_monthly = inv.add_investment_plan(
+        fund="TEST_SCHED_monthly",
+        frequency="monthly",
+        day_of_month=tomorrow.day,
         planned_amount=300,
         start_date=today.strftime("%Y-%m-%d"),
-        notes="scheduler test",
+        notes="scheduler test monthly",
     )
-    plan_row = plan["row"]
+    p_weekly = inv.add_investment_plan(
+        fund="TEST_SCHED_weekly",
+        frequency="weekly",
+        day_of_week=tomorrow.isoweekday(),
+        planned_amount=400,
+        start_date=today.strftime("%Y-%m-%d"),
+        notes="scheduler test weekly",
+    )
+    p_irregular = inv.add_investment_plan(
+        fund="TEST_SCHED_irregular",
+        frequency="irregular",
+        planned_amount=500,
+        start_date=today.strftime("%Y-%m-%d"),
+        notes="scheduler test irregular",
+    )
+    plan_rows = [p_monthly["row"], p_weekly["row"], p_irregular["row"]]
 
     sent: list[tuple[int, str]] = []
 
@@ -80,31 +125,32 @@ async def test_scan_once_mock() -> None:
         sent.append((chat_id, text))
 
     try:
-        # First scan: should fire once
         fake_now = datetime.combine(today, datetime.min.time()).replace(hour=sched.REMINDER_HOUR)
         fired = await sched._scan_once(fake_now, mock_send, force_hour=True)
         print(f"first scan fired: {fired}")
-        assert "TEST_SCHED_基金" in fired
-        assert len(sent) == 1
-        assert sent[0][0] == sched.USER_CHAT_ID
-        assert "明天" in sent[0][1]
-        assert "TEST_SCHED_基金" in sent[0][1]
-        print(f"sent text: {sent[0][1]}")
+        assert "TEST_SCHED_monthly" in fired
+        assert "TEST_SCHED_weekly" in fired
+        assert "TEST_SCHED_irregular" not in fired, "irregular plans must never auto-fire"
+        assert len(sent) == 2
+        for _, text in sent:
+            assert "明天" in text
+            # New format also includes weekday in Chinese
+            print(f"sent: {text}")
 
-        # Second scan same day: idempotency guard should suppress
         fired2 = await sched._scan_once(fake_now, mock_send, force_hour=True)
         print(f"second scan fired: {fired2}")
         assert fired2 == []
-        assert len(sent) == 1  # no new send
-        print("ok: idempotency guard prevented duplicate")
+        assert len(sent) == 2
+        print("ok: idempotency guard suppressed both")
     finally:
-        # Cleanup
         import gspread
         ss = gspread.service_account(filename=os.environ["GOOGLE_SHEETS_CREDENTIALS"]).open_by_key(
             os.environ["INVESTMENTS_SHEET_ID"]
         )
-        ss.worksheet(inv.PLAN_TAB).delete_rows(plan_row)
-        print(f"cleaned up plan row {plan_row}")
+        plan_tab = ss.worksheet(inv.PLAN_TAB)
+        for r in sorted(plan_rows, reverse=True):
+            plan_tab.delete_rows(r)
+        print(f"cleaned up plan rows {plan_rows}")
 
 
 async def test_scan_once_telegram() -> None:
@@ -122,6 +168,7 @@ async def test_scan_once_telegram() -> None:
 
     plan = inv.add_investment_plan(
         fund="TEST_SCHED_基金（请忽略）",
+        frequency="monthly",
         day_of_month=tomorrow.day,
         planned_amount=300,
         start_date=today.strftime("%Y-%m-%d"),

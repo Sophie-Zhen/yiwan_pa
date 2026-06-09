@@ -397,7 +397,7 @@ TOOLS: list[dict[str, Any]] = [
     # from a bank text, or asking '累计投了多少'.
     {
         "name": "add_investment_plan",
-        "description": "Add a new 基金定投 plan to the 计划 tab. Use when the user says e.g. '加一条定投：易方达蓝筹混合，月 10 号扣 500，6月1号起'. Plan status defaults to 'active'. day_of_month is 1-31 (the bank-debit day of each month). This records the SCHEDULE, not an actual investment — actual debits go through record_investment.",
+        "description": "Add a new 基金定投 plan to the 计划 tab. Plan status defaults to 'active'. This records the SCHEDULE, not an actual investment — actual debits go through record_investment. frequency picks which schedule field is required: 'monthly' needs day_of_month (1-31), 'weekly' needs day_of_week (1-7 ISO; 1=Mon, 4=Thu, 7=Sun), 'irregular' needs neither (no auto-reminder will fire — user will manually record debits when they happen). Examples: '加一条定投：易方达蓝筹混合 每月 10 号 500，6月1号起' → frequency='monthly', day_of_month=10. '富国全球科技 每周四扣 1000' → frequency='weekly', day_of_week=4. '思远定投全球好资产 不定期，每次 2500' → frequency='irregular'.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -405,24 +405,33 @@ TOOLS: list[dict[str, Any]] = [
                     "type": "string",
                     "description": "Fund name as the user gave it (e.g. '易方达蓝筹混合').",
                 },
-                "day_of_month": {
-                    "type": "integer",
-                    "description": "Day of month the bank debits, 1-31.",
+                "frequency": {
+                    "type": "string",
+                    "enum": ["monthly", "weekly", "irregular"],
+                    "description": "Debit frequency. Pick by what the user describes: a specific 每月 X 号 → monthly; 每周 X → weekly; 不定期/不固定/有信号才扣 → irregular.",
                 },
                 "planned_amount": {
                     "type": "number",
-                    "description": "Planned debit amount in RMB per month.",
+                    "description": "Planned debit amount in RMB per debit.",
                 },
                 "start_date": {
                     "type": "string",
                     "description": "Plan start date in YYYY-MM-DD format.",
+                },
+                "day_of_month": {
+                    "type": "integer",
+                    "description": "Day of month the bank debits, 1-31. Required ONLY when frequency='monthly'.",
+                },
+                "day_of_week": {
+                    "type": "integer",
+                    "description": "ISO weekday the bank debits: 1=周一, 2=周二, 3=周三, 4=周四, 5=周五, 6=周六, 7=周日. Required ONLY when frequency='weekly'. Convert from the user's wording (e.g. '每周四' → 4).",
                 },
                 "notes": {
                     "type": "string",
                     "description": "Optional free-form notes.",
                 },
             },
-            "required": ["fund", "day_of_month", "planned_amount", "start_date"],
+            "required": ["fund", "frequency", "planned_amount", "start_date"],
         },
     },
     {
@@ -716,9 +725,11 @@ def _execute_tool(name: str, args: dict[str, Any]) -> Any:
     if name == "add_investment_plan":
         return add_investment_plan(
             fund=args["fund"],
-            day_of_month=args["day_of_month"],
+            frequency=args["frequency"],
             planned_amount=args["planned_amount"],
             start_date=args["start_date"],
+            day_of_month=args.get("day_of_month"),
+            day_of_week=args.get("day_of_week"),
             notes=args.get("notes"),
         )
     if name == "list_investment_plans":

@@ -26,6 +26,11 @@ from typing import Awaitable, Callable, Optional
 from telegram.ext import Application, ContextTypes
 
 from tools import investments as inv
+from tools.investments import (
+    FREQUENCY_IRREGULAR,
+    FREQUENCY_MONTHLY,
+    FREQUENCY_WEEKLY,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,22 +41,40 @@ _chat_id_env = os.getenv("TELEGRAM_USER_CHAT_ID", "").strip()
 USER_CHAT_ID: Optional[int] = int(_chat_id_env) if _chat_id_env else None
 
 
-def _should_remind(plan_day_of_month: int, today: date) -> bool:
+def _should_remind(plan: dict, today: date) -> bool:
     """True iff tomorrow is the effective debit day for this plan.
 
-    Effective day = min(plan_day_of_month, days_in_tomorrow's_month) — for
-    plans like day=31 against Feb the bank debits on the 28th/29th.
+    monthly:  tomorrow.day == min(plan['day_of_month'], days_in_tomorrow_month)
+              — handles month-end roll (plan day=31 in Feb → fires on the 28th/29th).
+    weekly:   tomorrow.isoweekday() == plan['day_of_week']
+    irregular: never (no schedule to anchor on).
     """
+    freq = plan.get("frequency", "")
     tomorrow = today + timedelta(days=1)
-    days_in_tomorrow_month = calendar.monthrange(tomorrow.year, tomorrow.month)[1]
-    effective_debit_day = min(plan_day_of_month, days_in_tomorrow_month)
-    return tomorrow.day == effective_debit_day
+    if freq == FREQUENCY_MONTHLY:
+        day_of_month = plan.get("day_of_month")
+        if not day_of_month:
+            return False
+        days_in_tomorrow_month = calendar.monthrange(tomorrow.year, tomorrow.month)[1]
+        effective_debit_day = min(int(day_of_month), days_in_tomorrow_month)
+        return tomorrow.day == effective_debit_day
+    if freq == FREQUENCY_WEEKLY:
+        day_of_week = plan.get("day_of_week")
+        if not day_of_week:
+            return False
+        return tomorrow.isoweekday() == int(day_of_week)
+    # FREQUENCY_IRREGULAR or unknown — never auto-fire
+    return False
+
+
+_WEEKDAY_CN = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 
 
 def _format_reminder(plan: dict, today: date) -> str:
     tomorrow = today + timedelta(days=1)
+    weekday_cn = _WEEKDAY_CN[tomorrow.weekday()]
     return (
-        f"💰 定投提醒：明天（{tomorrow.strftime('%Y-%m-%d')}）"
+        f"💰 定投提醒：明天（{tomorrow.strftime('%Y-%m-%d')} {weekday_cn}）"
         f"应扣 {plan['fund']} {plan['planned_amount']} 元，记得查余额。"
     )
 
@@ -88,14 +111,13 @@ async def _scan_once(
 
     for plan in plans:
         try:
-            day_of_month = int(plan["day_of_month"])
+            if not _should_remind(plan, today):
+                continue
         except (ValueError, TypeError):
             logger.warning(
-                "plan %r has non-integer day_of_month: %r",
-                plan["fund"], plan["day_of_month"],
+                "plan %r: malformed schedule fields, skipping",
+                plan.get("fund"),
             )
-            continue
-        if not _should_remind(day_of_month, today):
             continue
         if plan["last_reminded"] == today_str:
             continue
