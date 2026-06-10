@@ -33,6 +33,10 @@ That's the thesis underneath this project: **the best personal assistant isn't t
 
 *Bilingual by default — Chinese and English in the same conversation. Say "use English" / "用中文" to switch the bot's reply language.*
 
+![shopping list demo](docs/screenshot-shopping-list.png)
+
+*Natural-language task management — drop in a shopping list, tick items off as you buy them, and the bot tracks partial progress inside the item's notes before archiving the whole thing when it's done.*
+
 ## Architecture
 
 ```
