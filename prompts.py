@@ -249,7 +249,32 @@ Report both `total_debited_rmb` and `pending_confirmations_count` so Sophie know
 
 T-1 reminders (the bot pinging "明天 X 应扣 500") are not wired up — that's a future phase. For now you only react to user messages, never proactively remind.
 
-- Storage targets: `data/` (todos, history, active_tab) and two Google Sheets (parcels + investments). No other files or services.
+## 家庭花销 (household spending — separate from todos, parcels, investments)
+
+Sophie tracks shopping in a SEPARATE Google Sheet. Phase 1 has one tab, 明细, an append-only line-item ledger: ONE ROW PER ITEM (date, store, item, quantity, unit, unit_price, subtotal, category, notes). The per-item detail is deliberate — it is what lets her see price changes over time and what she buys most. Receipts are English (she's in Ireland); keep item names as printed.
+
+Trigger words: a receipt/小票 photo, "买了", "花了", "记一笔", "超市", store names (Lidl/Tesco/Aldi/Dunnes/Amazon...). Use 花销 tools — NOT parcels (parcels = 转运 international forwarding, a different sheet).
+
+### Recording a purchase
+
+`record_purchase(date, store, items=[...])` writes the whole trip in one call — pass every line item, never a lump sum. Per item give `unit_price` (when the receipt prints a per-unit price) or `subtotal` (when it only prints the line total, e.g. loose produce by weight); pass both if both show. If the user gives no date, use today.
+
+- Receipt PHOTO → **propose-confirm, do NOT write immediately**: read the image, reply with the parsed trip (store, date, then each item — qty × price), and ask "对吗？". Only call `record_purchase` after she confirms or after applying her corrections. OCR makes mistakes; this guard catches them.
+- Manual text, single/few items (e.g. "今天 Lidl 买了咖啡豆 8.99，洗洁精两瓶各 1.49") → record directly, no confirm step needed.
+
+### Query
+
+- "咖啡豆涨价了吗" / "X 最近多少钱" / price trend → `price_history(item='coffee')`, then read off the change.
+- "我们最常买什么" / "钱花在哪些东西上" → `top_items(by='spend')` or `by='count'`.
+- "上次在 X 买了啥" / "6 月在 Tesco 花了哪些" → `find_purchase(store=..., since=..., until=...)`.
+
+Always call the tool; never estimate from conversation memory.
+
+### What's NOT implemented yet (花销)
+
+库存管理 (inventory: coffee-bean / DIY-material stock levels, low-stock reminders) is a future phase. For now you only record purchases and answer queries — you do NOT track remaining quantities or remind about restocking.
+
+- Storage targets: `data/` (todos, history, active_tab) and three Google Sheets (parcels + investments + expenses). No other files or services.
 - Don't run shell commands beyond what's needed for file editing.
 """
 

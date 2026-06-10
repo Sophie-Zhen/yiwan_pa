@@ -53,6 +53,12 @@ from tools.investments import (
     update_investment_confirmation,
     update_plan_status,
 )
+from tools.expenses import (
+    find_purchase,
+    price_history,
+    record_purchase,
+    top_items,
+)
 from tools.parcels import (
     apply_exchange_rate,
     find_parcel,
@@ -573,6 +579,88 @@ TOOLS: list[dict[str, Any]] = [
             "required": [],
         },
     },
+    {
+        "name": "record_purchase",
+        "description": "Record one shopping trip as line items in the 家庭花销 明细 ledger. Each item becomes its own row sharing the trip's date and store — this per-item detail is what powers price-trend and 'what we buy most' queries later, so capture EVERY line, not a lump sum. Receipts here are English (user is in Ireland); keep item names as printed. Use unit_price when the receipt shows a per-unit price; use subtotal when it only shows the line total (e.g. loose produce sold by weight); pass both if both are visible. IMPORTANT: when the input is a receipt photo, do NOT call this immediately — first reply with the parsed lines (store, date, each item/qty/price) and ask the user to confirm, then call record_purchase after they say it's correct. Manual text entry of a single item can be recorded directly.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string",
+                    "description": "Purchase date YYYY-MM-DD (from the receipt; use today if the user gives none).",
+                },
+                "store": {
+                    "type": "string",
+                    "description": "Store name, e.g. 'Lidl', 'Tesco', 'Amazon'.",
+                },
+                "items": {
+                    "type": "array",
+                    "description": "One object per line item.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "item": {"type": "string", "description": "Item name as printed on the receipt."},
+                            "quantity": {"type": "number", "description": "Quantity (count or weight)."},
+                            "unit_price": {"type": "number", "description": "Price per unit. Omit if only the line total is known."},
+                            "subtotal": {"type": "number", "description": "Line total. Omit if only the unit price is known."},
+                            "unit": {"type": "string", "description": "Optional unit, e.g. 'each', 'kg', 'pack'."},
+                            "category": {"type": "string", "description": "Optional coarse bucket, e.g. '食品', '日用', '装修'."},
+                            "notes": {"type": "string", "description": "Optional per-item note."},
+                        },
+                        "required": ["item", "quantity"],
+                    },
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "Optional trip-level note, applied to item rows that have no note of their own.",
+                },
+            },
+            "required": ["date", "store", "items"],
+        },
+    },
+    {
+        "name": "find_purchase",
+        "description": "Look up line items in the 花销 明细 ledger. Filters AND together: item (substring), store (substring), since/until (inclusive YYYY-MM-DD date bounds). Use for '上次在 X 买了啥', '6 月在 Tesco 花在哪些东西上'. For a pure price trend of one product, prefer price_history. DO NOT estimate from memory — call this tool.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "item": {"type": "string", "description": "Substring match on 商品."},
+                "store": {"type": "string", "description": "Substring match on 店铺."},
+                "since": {"type": "string", "description": "Inclusive start date YYYY-MM-DD."},
+                "until": {"type": "string", "description": "Inclusive end date YYYY-MM-DD."},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "price_history",
+        "description": "Every purchase of a product (substring match on 商品), sorted oldest→newest, with date/store/quantity/unit_price. Use to answer '咖啡豆涨价了吗', 'X 最近多少钱', 'price trend'. Returns the raw series; you read off whether the price rose or fell and by how much. DO NOT estimate from memory.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "item": {"type": "string", "description": "Product name substring, e.g. 'coffee'."},
+            },
+            "required": ["item"],
+        },
+    },
+    {
+        "name": "top_items",
+        "description": "Rank items in the 花销 明细 ledger to answer 'what do we buy the most / spend the most on'. Reports per item: times (purchase rows), total quantity, total spend. Sort by 'spend' (default), 'count', or 'quantity'. Optional since/until date range. DO NOT estimate from memory.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "by": {
+                    "type": "string",
+                    "enum": ["spend", "count", "quantity"],
+                    "description": "Ranking metric. Default 'spend'.",
+                },
+                "since": {"type": "string", "description": "Inclusive start date YYYY-MM-DD."},
+                "until": {"type": "string", "description": "Inclusive end date YYYY-MM-DD."},
+                "limit": {"type": "integer", "description": "Max items to return (default 15)."},
+            },
+            "required": [],
+        },
+    },
 ]
 
 
@@ -761,6 +849,29 @@ def _execute_tool(name: str, args: dict[str, Any]) -> Any:
         )
     if name == "investment_summary":
         return investment_summary(fund=args.get("fund"), year=args.get("year"))
+    if name == "record_purchase":
+        return record_purchase(
+            date=args["date"],
+            store=args["store"],
+            items=args["items"],
+            notes=args.get("notes"),
+        )
+    if name == "find_purchase":
+        return find_purchase(
+            item=args.get("item"),
+            store=args.get("store"),
+            since=args.get("since"),
+            until=args.get("until"),
+        )
+    if name == "price_history":
+        return price_history(item=args["item"])
+    if name == "top_items":
+        return top_items(
+            by=args.get("by", "spend"),
+            since=args.get("since"),
+            until=args.get("until"),
+            limit=args.get("limit", 15),
+        )
     raise ValueError(f"unknown tool: {name!r}")
 
 
