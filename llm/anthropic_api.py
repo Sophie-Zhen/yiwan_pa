@@ -708,6 +708,11 @@ TOOLS: list[dict[str, Any]] = [
             "required": [],
         },
     },
+    # Server-side tool — executed on Anthropic's infrastructure, NOT dispatched
+    # by _execute_tool. The model issues a query; Anthropic searches and feeds
+    # results (with citations) back within the same API call. A long search may
+    # return stop_reason="pause_turn", which the chat loop resumes.
+    {"type": "web_search_20260209", "name": "web_search", "max_uses": 5},
 ]
 
 
@@ -1096,6 +1101,14 @@ class AnthropicBackend(LLMBackend):
 
             if response.stop_reason in ("end_turn", "stop_sequence"):
                 return _extract_text(response.content)
+
+            if response.stop_reason == "pause_turn":
+                # A server-side tool (web_search) hit its internal iteration cap
+                # mid-run. Re-send the assistant content to resume — do NOT add
+                # a user message; the server picks up from the trailing
+                # server_tool_use block.
+                messages.append({"role": "assistant", "content": response.content})
+                continue
 
             if response.stop_reason != "tool_use":
                 logger.warning("unexpected stop_reason: %s", response.stop_reason)
