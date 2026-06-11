@@ -54,10 +54,13 @@ from tools.investments import (
     update_plan_status,
 )
 from tools.expenses import (
+    adjust_inventory,
     find_purchase,
+    list_inventory,
     price_history,
     record_purchase,
     top_items,
+    track_item,
 )
 from tools.parcels import (
     apply_exchange_rate,
@@ -581,7 +584,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "record_purchase",
-        "description": "Record one shopping trip as line items in the 家庭花销 明细 ledger. Each item becomes its own row sharing the trip's date and store — this per-item detail is what powers price-trend and 'what we buy most' queries later, so capture EVERY line, not a lump sum. Receipts here are English (user is in Ireland); keep item names as printed. Use unit_price when the receipt shows a per-unit price; use subtotal when it only shows the line total (e.g. loose produce sold by weight); pass both if both are visible. IMPORTANT: when the input is a receipt photo, do NOT call this immediately — first reply with the parsed lines (store, date, each item/qty/price) and ask the user to confirm, then call record_purchase after they say it's correct. Manual text entry of a single item can be recorded directly.",
+        "description": "Record one shopping trip as line items in the 家庭花销 明细 ledger. Each item becomes its own row sharing the trip's date and store — this per-item detail is what powers price-trend and 'what we buy most' queries later, so capture EVERY line, not a lump sum. Receipts here are English (user is in Ireland); keep item names as printed. Use unit_price when the receipt shows a per-unit price; use subtotal when it only shows the line total (e.g. loose produce sold by weight); pass both if both are visible. IMPORTANT: when the input is a receipt photo, do NOT call this immediately — first reply with the parsed lines (store, date, each item/qty/price) and ask the user to confirm, then call record_purchase after they say it's correct. Manual text entry of a single item can be recorded directly. Auto-restock: any tracked inventory item this trip replenished is bumped automatically — the result's inventory_updates lists what changed; mention it briefly if non-empty (e.g. '咖啡豆库存 +1 → 现 3 袋').",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -657,6 +660,50 @@ TOOLS: list[dict[str, Any]] = [
                 "since": {"type": "string", "description": "Inclusive start date YYYY-MM-DD."},
                 "until": {"type": "string", "description": "Inclusive end date YYYY-MM-DD."},
                 "limit": {"type": "integer", "description": "Max items to return (default 15)."},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "track_item",
+        "description": "Add an item to the 花销 库存 (inventory) watchlist, or update its settings. Being on this watchlist is what enables stock tracking and (future) restock reminders for it — untracked purchases just go to the ledger. Upsert by name: re-calling updates only the fields you pass (won't wipe accumulated quantity). Pick strategy by the item's nature: 'cycle' for things bought on a rough cadence and consumed steadily (coffee beans, milk) — no need to log consumption, low = long since last bought; 'threshold' for things used down to nothing with no regular need (DIY materials like cement, screws) — low = quantity at/below the minimum, so consumption must be logged via adjust_inventory. For 'threshold' you MUST pass threshold (the minimum quantity). For 'cycle' threshold is the typical interval in days (optional). Triggers: '开始跟踪/记一下库存 X', '把 X 加入库存', '咖啡豆还剩 2 袋，低于 1 袋提醒我'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "item": {"type": "string", "description": "Watchlist name. Keep it a distinctive substring of how it appears on receipts (e.g. 'coffee', 'cement') so purchases auto-match."},
+                "unit": {"type": "string", "description": "Unit of stock, e.g. 'bag', 'kg', 'each'."},
+                "strategy": {"type": "string", "enum": ["cycle", "threshold"], "description": "'cycle' = periodic buy (coffee); 'threshold' = consumed to zero (DIY materials)."},
+                "threshold": {"type": "number", "description": "For 'threshold': minimum quantity (required). For 'cycle': typical interval in days (optional)."},
+                "current_quantity": {"type": "number", "description": "Starting stock. Defaults to 0 on a new item; preserved on update if omitted."},
+                "last_purchase_date": {"type": "string", "description": "Optional YYYY-MM-DD of the last purchase."},
+                "last_unit_price": {"type": "number", "description": "Optional last known unit price."},
+                "notes": {"type": "string", "description": "Optional note."},
+            },
+            "required": ["item", "unit", "strategy"],
+        },
+    },
+    {
+        "name": "adjust_inventory",
+        "description": "Change a tracked item's current stock — for consumption or correction. Matches one active inventory item by substring. Use `delta` for a relative change ('用了2袋' → delta=-2; bought one by hand → delta=+1) or `set_quantity` for an absolute reading ('还剩半袋' → set_quantity=0.5; '没了/用完了' → set_quantity=0). Do NOT use this for normal purchases recorded via record_purchase — those auto-restock. This is for consumption and manual fixes.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "item": {"type": "string", "description": "Substring of the tracked item's name."},
+                "delta": {"type": "number", "description": "Relative change (negative for consumption)."},
+                "set_quantity": {"type": "number", "description": "Absolute new quantity (overrides delta)."},
+                "notes": {"type": "string", "description": "Optional note."},
+            },
+            "required": ["item"],
+        },
+    },
+    {
+        "name": "list_inventory",
+        "description": "List inventory items with a computed low-stock flag. Use for '库存还有啥', '什么快没了/该买什么' (pass low_only=true for the restock list), 'X 还剩多少'. `low` is derived: threshold items are low when quantity <= 阈值; cycle items are low when days since last purchase >= the interval. Each item also reports days_since_purchase. DO NOT estimate from memory.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "low_only": {"type": "boolean", "description": "If true, return only items flagged low (the restock list)."},
+                "status_filter": {"type": "string", "description": "Inventory status to filter by; default 'active'."},
             },
             "required": [],
         },
@@ -871,6 +918,29 @@ def _execute_tool(name: str, args: dict[str, Any]) -> Any:
             since=args.get("since"),
             until=args.get("until"),
             limit=args.get("limit", 15),
+        )
+    if name == "track_item":
+        return track_item(
+            item=args["item"],
+            unit=args["unit"],
+            strategy=args["strategy"],
+            threshold=args.get("threshold"),
+            current_quantity=args.get("current_quantity"),
+            last_purchase_date=args.get("last_purchase_date"),
+            last_unit_price=args.get("last_unit_price"),
+            notes=args.get("notes"),
+        )
+    if name == "adjust_inventory":
+        return adjust_inventory(
+            item=args["item"],
+            delta=args.get("delta"),
+            set_quantity=args.get("set_quantity"),
+            notes=args.get("notes"),
+        )
+    if name == "list_inventory":
+        return list_inventory(
+            status_filter=args.get("status_filter", "active"),
+            low_only=args.get("low_only", False),
         )
     raise ValueError(f"unknown tool: {name!r}")
 

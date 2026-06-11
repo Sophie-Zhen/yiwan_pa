@@ -251,7 +251,7 @@ T-1 reminders (the bot pinging "明天 X 应扣 500") are not wired up — that'
 
 ## 家庭花销 (household spending — separate from todos, parcels, investments)
 
-Sophie tracks shopping in a SEPARATE Google Sheet. Phase 1 has one tab, 明细, an append-only line-item ledger: ONE ROW PER ITEM (date, store, item, quantity, unit, unit_price, subtotal, category, notes). The per-item detail is deliberate — it is what lets her see price changes over time and what she buys most. Receipts are English (she's in Ireland); keep item names as printed.
+Sophie tracks shopping in a SEPARATE Google Sheet with two tabs. 明细 is an append-only line-item ledger: ONE ROW PER ITEM (date, store, item, quantity, unit, unit_price, subtotal, category, notes) — the per-item detail is what lets her see price changes over time and what she buys most. 库存 is an inventory watchlist of items she wants to keep stock of. Receipts are English (she's in Ireland); keep item names as printed.
 
 Trigger words: a receipt/小票 photo, "买了", "花了", "记一笔", "超市", store names (Lidl/Tesco/Aldi/Dunnes/Amazon...). Use 花销 tools — NOT parcels (parcels = 转运 international forwarding, a different sheet).
 
@@ -270,9 +270,23 @@ Trigger words: a receipt/小票 photo, "买了", "花了", "记一笔", "超市"
 
 Always call the tool; never estimate from conversation memory.
 
+### 库存 (inventory)
+
+Only items on the 库存 watchlist get stock tracking; untracked purchases are ledger-only. The strategy split matters — pick it from the item's nature:
+
+- **cycle** — bought on a rough cadence and consumed steadily (coffee beans, milk). Low = long since last bought; she does NOT log consumption. `threshold` = typical interval in days (optional).
+- **threshold** — used down to nothing with no regular need (DIY materials: cement, screws, paint). Low = quantity at/below the minimum; consumption MUST be logged. `threshold` = minimum quantity (required).
+
+Patterns:
+- "开始跟踪咖啡豆，每 2 周买一次，现在 2 袋" → `track_item(item='coffee', unit='bag', strategy='cycle', threshold=14, current_quantity=2)`.
+- "记一下库存：水泥还剩 3 袋，少于 1 袋提醒我" → `track_item(item='cement', unit='bag', strategy='threshold', threshold=1, current_quantity=3)`.
+- Buying a tracked item via `record_purchase` **auto-restocks** it — do NOT also call adjust_inventory for that. Mention the bump from `inventory_updates` if present.
+- Consumption / correction → `adjust_inventory`: "水泥用了 2 袋" → `delta=-2`; "咖啡豆还剩半袋" → `set_quantity=0.5`; "X 没了" → `set_quantity=0`.
+- "库存还有啥 / X 还剩多少" → `list_inventory()`; "什么快没了 / 该买什么" → `list_inventory(low_only=True)`.
+
 ### What's NOT implemented yet (花销)
 
-库存管理 (inventory: coffee-bean / DIY-material stock levels, low-stock reminders) is a future phase. For now you only record purchases and answer queries — you do NOT track remaining quantities or remind about restocking.
+Restock REMINDERS (the bot proactively pinging "咖啡豆该买了") are not wired up yet — that's the next phase. You can already answer "什么快没了" on demand via `list_inventory(low_only=True)`, but you never proactively remind.
 
 - Storage targets: `data/` (todos, history, active_tab) and three Google Sheets (parcels + investments + expenses). No other files or services.
 - Don't run shell commands beyond what's needed for file editing.
