@@ -27,6 +27,7 @@ from telegram.ext import (
     filters,
 )
 
+import inventory_scheduler
 import investment_scheduler
 import scheduler
 from llm import get_backend
@@ -349,6 +350,7 @@ def main() -> None:
         logger.info("evening digest scheduled at %s (system local time)", EVENING_DIGEST_TIME)
         scheduler.register_jobs(app)
         investment_scheduler.register_jobs(app)
+        inventory_scheduler.register_jobs(app)
 
     print("Bot starting... press Ctrl+C to stop.")
     app.run_polling()

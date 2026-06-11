@@ -62,10 +62,11 @@ LAST_COL = "I"
 #                       'threshold' → minimum quantity (required)
 #                       'cycle'     → typical interval in DAYS (optional; blank
 #                                     means derive from history in Phase 3)
-#     F 上次购买日  | refreshed on auto-restock (YYYY-MM-DD)
-#     G 上次单价    | refreshed on auto-restock
-#     H 状态        | one of VALID_INVENTORY_STATUSES
-#     I 备注        | input
+#     F 上次购买日   | refreshed on auto-restock (YYYY-MM-DD)
+#     G 上次单价     | refreshed on auto-restock
+#     H 状态         | one of VALID_INVENTORY_STATUSES
+#     I 上次提醒日期 | written by the restock scheduler; gates re-reminding
+#     J 备注         | input
 INVENTORY_TAB = "库存"
 INV_COL_ITEM = 1
 INV_COL_QUANTITY = 2
@@ -75,9 +76,10 @@ INV_COL_THRESHOLD = 5
 INV_COL_LAST_PURCHASE = 6
 INV_COL_LAST_PRICE = 7
 INV_COL_STATUS = 8
-INV_COL_NOTES = 9
-INV_NUM_COLS = 9
-INV_LAST_COL = "I"
+INV_COL_LAST_REMINDED = 9
+INV_COL_NOTES = 10
+INV_NUM_COLS = 10
+INV_LAST_COL = "J"
 
 STRATEGY_CYCLE = "cycle"
 STRATEGY_THRESHOLD = "threshold"
@@ -462,6 +464,9 @@ def track_item(
     elif existing:
         row[INV_COL_LAST_PRICE - 1] = _keep(INV_COL_LAST_PRICE)
     row[INV_COL_STATUS - 1] = "active"
+    # Preserve reminder state across re-tracking so changing a setting doesn't
+    # silently re-arm (or suppress) a restock reminder.
+    row[INV_COL_LAST_REMINDED - 1] = _keep(INV_COL_LAST_REMINDED)
     row[INV_COL_NOTES - 1] = notes if notes is not None else _keep(INV_COL_NOTES)
 
     target_row = existing_row if existing_row is not None else _find_first_empty_inventory_row(tab)
@@ -592,6 +597,35 @@ def list_inventory(status_filter: str | None = "active", low_only: bool = False)
             "days_since_purchase": days_since,
             "low": low,
             "status": status,
+            "last_reminded": row[INV_COL_LAST_REMINDED - 1] if len(row) >= INV_COL_LAST_REMINDED else "",
             "notes": row[INV_COL_NOTES - 1] if len(row) >= INV_COL_NOTES else "",
         })
     return out
+
+
+def mark_inventory_reminded(row: int, date_str: str) -> dict:
+    """Set 上次提醒日期 on an inventory row. Internal helper for the restock
+    scheduler; NOT an LLM tool. Restock idempotency lives here together with
+    items_needing_restock_reminder: a low item is reminded once, then stays
+    quiet until a purchase advances 上次购买日 past 上次提醒日期.
+    """
+    tab = _inventory_tab()
+    tab.update_cell(row, INV_COL_LAST_REMINDED, date_str)
+    return {"row": row, "last_reminded": date_str}
+
+
+def items_needing_restock_reminder() -> list[dict]:
+    """Active, low-stock items not yet reminded since their last restock.
+
+    Reuses list_inventory's derived `low`. An item is due when it is low AND
+    (never reminded OR last reminded before the last purchase) — so a reminder
+    fires once when stock goes low, then stays quiet until a purchase re-arms
+    it. Items never purchased (no 上次购买日) are reminded once and then quiet.
+    """
+    due: list[dict] = []
+    for it in list_inventory(low_only=True):
+        last_reminded = it.get("last_reminded") or ""
+        last_purchase = it.get("last_purchase_date") or ""
+        if not last_reminded or (last_purchase and last_reminded < last_purchase):
+            due.append(it)
+    return due
