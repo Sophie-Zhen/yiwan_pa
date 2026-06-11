@@ -24,7 +24,7 @@ LEDGER_HEADERS = [
 INVENTORY_TAB = "库存"
 INVENTORY_HEADERS = [
     "商品", "当前数量", "单位", "补货策略", "阈值",
-    "上次购买日", "上次单价", "状态", "备注",
+    "上次购买日", "上次单价", "状态", "上次提醒日期", "备注",
 ]
 
 
@@ -40,6 +40,7 @@ INVENTORY_FORMATS = [
     ("E:E", NUMBER("General")),  # 阈值 (qty or interval-days)
     ("F:F", DATE),               # 上次购买日
     ("G:G", NUMBER("0.00")),     # 上次单价
+    ("I:I", DATE),               # 上次提醒日期
 ]
 
 

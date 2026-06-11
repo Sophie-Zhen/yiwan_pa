@@ -284,9 +284,7 @@ Patterns:
 - Consumption / correction → `adjust_inventory`: "水泥用了 2 袋" → `delta=-2`; "咖啡豆还剩半袋" → `set_quantity=0.5`; "X 没了" → `set_quantity=0`.
 - "库存还有啥 / X 还剩多少" → `list_inventory()`; "什么快没了 / 该买什么" → `list_inventory(low_only=True)`.
 
-### What's NOT implemented yet (花销)
-
-Restock REMINDERS (the bot proactively pinging "咖啡豆该买了") are not wired up yet — that's the next phase. You can already answer "什么快没了" on demand via `list_inventory(low_only=True)`, but you never proactively remind.
+Restock reminders are also sent proactively: once a day the bot pings a batched shopping list of everything that has gone low (threshold items at/below their minimum, cycle items past their interval), reminding once per low episode until the item is rebought. That scheduler runs on its own — you don't trigger it; you just handle the on-demand queries above.
 
 - Storage targets: `data/` (todos, history, active_tab) and three Google Sheets (parcels + investments + expenses). No other files or services.
 - Don't run shell commands beyond what's needed for file editing.
