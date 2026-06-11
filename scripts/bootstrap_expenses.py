@@ -21,8 +21,34 @@ LEDGER_HEADERS = [
     "日期", "店铺", "商品", "数量", "单位", "单价", "小计", "类别", "备注",
 ]
 
+INVENTORY_TAB = "库存"
+INVENTORY_HEADERS = [
+    "商品", "当前数量", "单位", "补货策略", "阈值",
+    "上次购买日", "上次单价", "状态", "备注",
+]
 
-def ensure_tab(ss: gspread.Spreadsheet, name: str, headers: list[str]) -> None:
+
+# Number formats per tab. General renders mixed integer/fractional quantities
+# cleanly (1 → "1", not "1."); a fixed pattern like "0.##" leaves a trailing
+# dot on integers. Prices use 0.00; dates use the ISO date pattern.
+NUMBER = lambda pat: {"numberFormat": {"type": "NUMBER", "pattern": pat}}  # noqa: E731
+DATE = {"numberFormat": {"type": "DATE", "pattern": "yyyy-mm-dd"}}
+
+LEDGER_FORMATS = [("A:A", DATE), ("D:D", NUMBER("General")), ("F:G", NUMBER("0.00"))]
+INVENTORY_FORMATS = [
+    ("B:B", NUMBER("General")),  # 当前数量 (mixed int/fraction)
+    ("E:E", NUMBER("General")),  # 阈值 (qty or interval-days)
+    ("F:F", DATE),               # 上次购买日
+    ("G:G", NUMBER("0.00")),     # 上次单价
+]
+
+
+def ensure_tab(
+    ss: gspread.Spreadsheet,
+    name: str,
+    headers: list[str],
+    formats: list[tuple[str, dict]],
+) -> None:
     try:
         ws = ss.worksheet(name)
         existing = ws.row_values(1)
@@ -34,13 +60,8 @@ def ensure_tab(ss: gspread.Spreadsheet, name: str, headers: list[str]) -> None:
     except WorksheetNotFound:
         ws = ss.add_worksheet(title=name, rows=500, cols=max(len(headers), 9))
         ws.update(values=[headers], range_name="A1")
-        # Number formats so quantities/prices render cleanly and dates as dates.
-        ws.format("A:A", {"numberFormat": {"type": "DATE", "pattern": "yyyy-mm-dd"}})
-        # 数量 is mixed integer (1, 2) and fractional (0.62 kg). General renders
-        # both cleanly (1 → "1", not "1."); a fixed pattern like "0.##" leaves a
-        # trailing dot on integers.
-        ws.format("D:D", {"numberFormat": {"type": "NUMBER", "pattern": "General"}})
-        ws.format("F:G", {"numberFormat": {"type": "NUMBER", "pattern": "0.00"}})
+        for rng, fmt in formats:
+            ws.format(rng, fmt)
         print(f"[ok] created tab '{name}' with headers: {headers}")
 
 
@@ -51,7 +72,8 @@ def main() -> None:
     print(f"opened spreadsheet: {ss.title}")
     print(f"existing tabs: {[w.title for w in ss.worksheets()]}")
 
-    ensure_tab(ss, LEDGER_TAB, LEDGER_HEADERS)
+    ensure_tab(ss, LEDGER_TAB, LEDGER_HEADERS, LEDGER_FORMATS)
+    ensure_tab(ss, INVENTORY_TAB, INVENTORY_HEADERS, INVENTORY_FORMATS)
 
     print("\nfinal tabs:", [w.title for w in ss.worksheets()])
 
