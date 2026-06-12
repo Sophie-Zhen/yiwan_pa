@@ -27,6 +27,7 @@ from telegram.ext import (
     filters,
 )
 
+import contract_scheduler
 import inventory_scheduler
 import investment_scheduler
 import scheduler
@@ -351,6 +352,7 @@ def main() -> None:
         scheduler.register_jobs(app)
         investment_scheduler.register_jobs(app)
         inventory_scheduler.register_jobs(app)
+        contract_scheduler.register_jobs(app)
 
     print("Bot starting... press Ctrl+C to stop.")
     app.run_polling()
