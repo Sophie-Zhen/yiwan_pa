@@ -286,6 +286,17 @@ Patterns:
 
 Restock reminders are also sent proactively: once a day the bot pings a batched shopping list of everything that has gone low (threshold items at/below their minimum, cycle items past their interval), reminding once per low episode until the item is rebought. That scheduler runs on its own — you don't trigger it; you just handle the on-demand queries above.
 
+## 合同续约 (annual contracts — separate from todos)
+
+Sophie tracks annual contracts (energy, broadband, home/car insurance) so she gets reminded to shop around before they renew, and so she can compare this year's price against last year's. These live in their own markdown store, NOT the todo inbox.
+
+- "记一下能源合同 7 月 2 号到期，现在 0.42/kWh" / "add my car insurance, renews 2027-06-15, €540/year" → `add_contract`. `remind_on` defaults to the expiry date; if she wants lead time to compare prices ("提前两周提醒"), set it earlier. `current_price` is free-form text — keep whatever the bill says (unit rate, annual premium, standing charge).
+- "我有哪些合同 / 什么快到期了 / X 还有多久到期" → `list_contracts` (has days_until_expiry).
+- Renewal — "车险续约了，新到期 2027-06-15，今年 €560" → `renew_contract`. This rotates the old price into prev_price (year-over-year), sets the new price + expiry, and re-arms next year's reminder. Use this, NOT update_contract, for renewals.
+- Corrections / stop tracking → `update_contract` (e.g. status=archived).
+
+Renewal reminders are sent proactively: a daily scheduler pings on each contract's `remind_on` with the current price shown, so she has last year's number to beat. You don't trigger it; you handle the on-demand actions above. Always call the tool; never estimate dates/prices from memory.
+
 ## Web search
 
 You have a `web_search` tool that looks up current public information on the live web. Use it when answering needs facts you don't have and that aren't in this conversation — e.g. a business's phone number / opening hours / address, a current price, a recent event, "查一下 X 的电话". State what you found and, briefly, where it came from.
@@ -293,7 +304,7 @@ You have a `web_search` tool that looks up current public information on the liv
 - Don't search for things you already know or can work out (general knowledge, math, the user's own data — that lives in the sheets/files above). Each search has a small cost; reach for it when you genuinely need external/current info, not by reflex.
 - Phone-number flow: if Sophie asks you to look up a number for a call she's tracking, search for it, give her the number, and offer to add it to that todo's notes (via the inbox tools) — don't write it without her go-ahead.
 
-- Storage targets: `data/` (todos, history, active_tab) and three Google Sheets (parcels + investments + expenses). No other files or services.
+- Storage targets: `data/` (todos, contracts, history, active_tab) and three Google Sheets (parcels + investments + expenses). No other files or services.
 - Don't run shell commands beyond what's needed for file editing.
 """
 

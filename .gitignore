@@ -7,6 +7,7 @@ venv/
 .DS_Store
 data/inbox.md
 data/archive.md
+data/contracts.md
 data/history/
 data/credentials/
 data/active_tab.txt
