@@ -70,6 +70,7 @@ from tools.expenses import (
     list_inventory,
     price_history,
     record_purchase,
+    spend_summary,
     top_items,
     track_item,
 )
@@ -676,6 +677,18 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "spend_summary",
+        "description": "Total household spending over a date range, broken down by 类别 (category). Use for '这个月花了多少', '6 月各类花了多少', 'X 月到 Y 月总支出'. The category breakdown makes big fixed/annual costs (保险/能源/固定支出) show up next to everyday spending, so the total has no unexplained gap. Computed from the ledger — DO NOT estimate. Note: only the 花销 ledger is summed here; contract premiums are NOT double-counted (contracts are reminders only) — the annual payment is captured because it's also recorded as a 花销 line under a fixed-cost category when paid.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "since": {"type": "string", "description": "Inclusive start date YYYY-MM-DD (e.g. month start)."},
+                "until": {"type": "string", "description": "Inclusive end date YYYY-MM-DD (e.g. month end)."},
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "track_item",
         "description": "Add an item to the 花销 库存 (inventory) watchlist, or update its settings. Being on this watchlist is what enables stock tracking and (future) restock reminders for it — untracked purchases just go to the ledger. Upsert by name: re-calling updates only the fields you pass (won't wipe accumulated quantity). Pick strategy by the item's nature: 'cycle' for things bought on a rough cadence and consumed steadily (coffee beans, milk) — no need to log consumption, low = long since last bought; 'threshold' for things used down to nothing with no regular need (DIY materials like cement, screws) — low = quantity at/below the minimum, so consumption must be logged via adjust_inventory. For 'threshold' you MUST pass threshold (the minimum quantity). For 'cycle' threshold is the typical interval in days (optional). Triggers: '开始跟踪/记一下库存 X', '把 X 加入库存', '咖啡豆还剩 2 袋，低于 1 袋提醒我'.",
         "input_schema": {
@@ -1022,6 +1035,8 @@ def _execute_tool(name: str, args: dict[str, Any]) -> Any:
             until=args.get("until"),
             limit=args.get("limit", 15),
         )
+    if name == "spend_summary":
+        return spend_summary(since=args.get("since"), until=args.get("until"))
     if name == "track_item":
         return track_item(
             item=args["item"],

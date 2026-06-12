@@ -116,6 +116,20 @@ def main() -> None:
         assert coffee_agg["times"] == 2
         assert abs(coffee_agg["spend"] - (8.99 + 7.49)) < 0.001
 
+        print("\n=== spend_summary (category breakdown incl. a fixed cost) ===")
+        ins = exp.record_purchase(
+            date="2026-06-15", store="TEST_AXA",
+            items=[{"item": "TEST_car insurance", "quantity": 1, "unit_price": 560,
+                    "category": "TEST_保险"}],
+        )
+        created_rows.extend(range(ins["rows"][0], ins["rows"][1] + 1))
+        summ = exp.spend_summary(since="2026-06-01", until="2026-06-30")
+        print(summ)
+        # Unique category → deterministic even if the real sheet has other rows.
+        assert summ["by_category"].get("TEST_保险") == 560.0, summ["by_category"]
+        assert summ["total"] >= 560.0
+        print("ok: fixed cost surfaces as its own category in the monthly total")
+
         print("\n[all assertions passed]")
     finally:
         print(f"\ncleaning up rows {created_rows}")

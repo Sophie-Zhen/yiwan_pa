@@ -386,6 +386,38 @@ def top_items(
     ]
 
 
+def spend_summary(since: str | None = None, until: str | None = None) -> dict:
+    """Total spend over a date range, broken down by 类别 (category).
+
+    This is the "where did my money go" view — the categorised total makes
+    big fixed/annual costs (保险 / 能源 / 固定支出) visible alongside everyday
+    spending, so a monthly tally doesn't have an unexplained gap. Computed in
+    code (summed from the ledger rows), not estimated by the model.
+
+    Rows with no category bucket under '未分类'. since/until are inclusive
+    YYYY-MM-DD bounds, same as find_purchase.
+    """
+    rows = find_purchase(since=since, until=until)
+    by_category: dict[str, float] = {}
+    total = 0.0
+    for r in rows:
+        amount = _to_float(str(r["subtotal"]))
+        total += amount
+        category = r["category"] or "未分类"
+        by_category[category] = by_category.get(category, 0.0) + amount
+
+    return {
+        "since": since,
+        "until": until,
+        "total": round(total, 2),
+        "rows_count": len(rows),
+        "by_category": {
+            k: round(v, 2)
+            for k, v in sorted(by_category.items(), key=lambda kv: kv[1], reverse=True)
+        },
+    }
+
+
 # --- 库存 (inventory) ---------------------------------------------------------
 
 def _find_first_empty_inventory_row(tab: gspread.Worksheet) -> int:

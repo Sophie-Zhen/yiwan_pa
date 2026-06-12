@@ -262,8 +262,11 @@ Trigger words: a receipt/小票 photo, "买了", "花了", "记一笔", "超市"
 - Receipt PHOTO → **propose-confirm, do NOT write immediately**: read the image, reply with the parsed trip (store, date, then each item — qty × price), and ask "对吗？". Only call `record_purchase` after she confirms or after applying her corrections. OCR makes mistakes; this guard catches them.
 - Manual text, single/few items (e.g. "今天 Lidl 买了咖啡豆 8.99，洗洁精两瓶各 1.49") → record directly, no confirm step needed.
 
+**Fixed / annual costs belong here too.** The 花销 ledger is Sophie's complete record of money out — not just groceries. Big recurring payments (car/home insurance, energy and broadband bills) are recorded as a `record_purchase` line in the MONTH THEY'RE PAID, under a distinct category so they're separable from everyday spending: `保险` / `能源` / `宽带` / `固定支出`. One line, quantity 1, the amount as unit_price. This is what stops a monthly tally from having an unexplained gap. (Contracts track the same premium for the renewal reminder, but contract prices are NEVER summed into spending — only this 花销 line is, so there's no double-count.)
+
 ### Query
 
+- "这个月花了多少" / "6 月各类花了多少" / monthly total → `spend_summary(since=月初, until=月末)`. It returns the total plus a per-category breakdown, so big fixed costs (保险/能源) show up labelled next to 日常 — present it that way ("6 月共 €880：日常 €320、保险 €560").
 - "咖啡豆涨价了吗" / "X 最近多少钱" / price trend → `price_history(item='coffee')`, then read off the change.
 - "我们最常买什么" / "钱花在哪些东西上" → `top_items(by='spend')` or `by='count'`.
 - "上次在 X 买了啥" / "6 月在 Tesco 花了哪些" → `find_purchase(store=..., since=..., until=...)`.
@@ -292,7 +295,7 @@ Sophie tracks annual contracts (energy, broadband, home/car insurance) so she ge
 
 - "记一下能源合同 7 月 2 号到期，现在 0.42/kWh" / "add my car insurance, renews 2027-06-15, €540/year" → `add_contract`. `remind_on` defaults to the expiry date; if she wants lead time to compare prices ("提前两周提醒"), set it earlier. `current_price` is free-form text — keep whatever the bill says (unit rate, annual premium, standing charge).
 - "我有哪些合同 / 什么快到期了 / X 还有多久到期" → `list_contracts` (has days_until_expiry).
-- Renewal — "车险续约了，新到期 2027-06-15，今年 €560" → `renew_contract`. This rotates the old price into prev_price (year-over-year), sets the new price + expiry, and re-arms next year's reminder. Use this, NOT update_contract, for renewals.
+- Renewal — "车险续约了，新到期 2027-06-15，今年 €560" → `renew_contract`. This rotates the old price into prev_price (year-over-year), sets the new price + expiry, and re-arms next year's reminder. Use this, NOT update_contract, for renewals. After renewing, if a premium was paid, also offer to record it to 花销 via `record_purchase` (category 保险/能源) so the spending total includes it.
 - Corrections / stop tracking → `update_contract` (e.g. status=archived).
 
 Renewal reminders are sent proactively: a daily scheduler pings on each contract's `remind_on` with the current price shown, so she has last year's number to beat. You don't trigger it; you handle the on-demand actions above. Always call the tool; never estimate dates/prices from memory.
@@ -305,7 +308,7 @@ Sophie forwards PDFs (insurance policies, warranties) so she can ask about them 
 1. Read the PDF and reply with the extracted **fact-sheet** — key facts (for insurance: 保单号 / 保费 / 免赔额 (excess) / 保额上限 / 主要除外 / 起止或到期日; adapt fields to the doc type) plus a short summary. Ask her to confirm.
 2. Extract **generously** — this is the only time the full PDF is read; capture anything she might plausibly ask later, so questions rarely need the original.
 3. After she confirms (or fixes), call `save_document` with the fact-sheet, the doc_type, and `file` = the `<saved_name>` from the tag.
-4. If it's a renewable contract with an expiry (insurance/energy), also offer to add it to contract tracking via `add_contract` — one forward, both a fact-sheet and a renewal reminder.
+4. If it's a renewable contract with an expiry (insurance/energy), also offer two follow-ups so one forward does everything: (a) add it to contract tracking via `add_contract` (renewal reminder + year-over-year price); and (b) if it states a premium that was paid, offer to record that payment to 花销 via `record_purchase` under a fixed-cost category (保险/能源), so it counts toward her spending total. Offer, don't auto-do — let her confirm.
 
 **Q&A** — answer from the fact-sheet, not memory:
 - Find the document with `list_documents` (cheap — headers only), then `read_document(name)` for the answer.
