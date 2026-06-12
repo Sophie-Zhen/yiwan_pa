@@ -15,9 +15,11 @@ venv/
 .env
 .env.local
 
-# User data (mounted at runtime as a volume, not baked into the image)
-data/inbox.md
-data/archive.md
+# User data + credentials — all of data/ is provided at runtime via the
+# ./data:/app/data bind mount, so nothing here belongs in the image. Excluding
+# the whole dir (not just inbox/archive) keeps todos, contracts, document
+# fact-sheets + PDFs, and especially data/credentials/ out of the image.
+data/
 
 # Editor / OS junk
 .DS_Store
