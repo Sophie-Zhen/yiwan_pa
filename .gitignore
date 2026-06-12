@@ -8,6 +8,7 @@ venv/
 data/inbox.md
 data/archive.md
 data/contracts.md
+data/documents/
 data/history/
 data/credentials/
 data/active_tab.txt

@@ -15,6 +15,7 @@ class LLMBackend(ABC):
         system_prompt: str = "",
         history: list[dict[str, str]] | None = None,
         images: list[bytes] | None = None,
+        documents: list[bytes] | None = None,
     ) -> str:
         """Send a single user message and return the assistant's reply.
 
@@ -32,6 +33,10 @@ class LLMBackend(ABC):
                 the user message. Backends without vision support log a
                 warning and ignore. Image bytes are NOT persisted in history
                 — only the text user_message survives across turns.
+            documents: optional list of PDF bytes to send alongside the user
+                message (e.g. an insurance policy to extract). Backends without
+                document support log a warning and ignore. Like images, not
+                persisted in history.
 
         See docs/decisions/0001-conversation-history.md for the storage
         layer that produces `history`.

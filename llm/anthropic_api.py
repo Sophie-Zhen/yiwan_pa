@@ -59,6 +59,11 @@ from tools.contracts import (
     renew_contract,
     update_contract,
 )
+from tools.documents import (
+    list_documents,
+    read_document,
+    save_document,
+)
 from tools.expenses import (
     adjust_inventory,
     find_purchase,
@@ -769,6 +774,38 @@ TOOLS: list[dict[str, Any]] = [
             "required": ["name", "field", "value"],
         },
     },
+    {
+        "name": "save_document",
+        "description": "Persist a document's fact-sheet after extracting it from a PDF. WORKFLOW: when a PDF arrives (the message is tagged '[文档 PDF: <name>，原件已存为 <saved_name>]'), FIRST read it and reply with the extracted fact-sheet — key facts (for insurance: 保单号, 保费, 免赔额/excess, 保额上限, 主要除外, 起止/到期日; adapt fields to the doc type) plus a short summary — and ask Sophie to confirm. Only call save_document AFTER she confirms (or after applying her fixes). Extract GENEROUSLY: this is a once-a-year read, and later questions are answered from this fact-sheet, not the PDF — capture anything she might ask later. Pass `file` = the <saved_name> from the message tag so the original can be found. If the document is a renewable contract (insurance/energy) with an expiry, also offer to add it to contract tracking via add_contract.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Document name, e.g. 'AXA 车险保单 2026'."},
+                "doc_type": {"type": "string", "enum": ["insurance", "car_insurance", "home_insurance", "warranty", "manual", "contract", "statement", "other"]},
+                "fact_sheet": {"type": "string", "description": "The extracted fact-sheet body as rich markdown (key facts + summary). Multi-line is fine."},
+                "file": {"type": "string", "description": "The stored original's filename (the <saved_name> from the PDF message tag)."},
+                "source_date": {"type": "string", "description": "Optional document/ingest date YYYY-MM-DD; defaults to today."},
+                "expiry": {"type": "string", "description": "Optional expiry/renewal date YYYY-MM-DD if the document has one."},
+            },
+            "required": ["name", "doc_type", "fact_sheet"],
+        },
+    },
+    {
+        "name": "list_documents",
+        "description": "List stored documents (name, type, expiry, source_date) from their fact-sheet headers — cheap, does not load the bodies. Use for '我有哪些文档 / 存了哪些单子' and to find which document a question is about before calling read_document.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "read_document",
+        "description": "Return a stored document's full fact-sheet to answer a question about it (e.g. '我的车险免赔额多少', '房屋险保额上限'). Match by name/type substring. This is the normal answer path — answer from the fact-sheet, which was extracted at ingest. If the fact-sheet genuinely doesn't contain the answer, tell Sophie it's not on the fact-sheet and offer to re-read the original PDF (that full-read path isn't built yet — don't fabricate). DO NOT estimate from memory.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Document name or type substring."},
+            },
+            "required": ["name"],
+        },
+    },
     # Server-side tool — executed on Anthropic's infrastructure, NOT dispatched
     # by _execute_tool. The model issues a query; Anthropic searches and feeds
     # results (with citations) back within the same API call. A long search may
@@ -1033,6 +1070,19 @@ def _execute_tool(name: str, args: dict[str, Any]) -> Any:
             field=args["field"],
             value=args.get("value"),
         )
+    if name == "save_document":
+        return save_document(
+            name=args["name"],
+            doc_type=args["doc_type"],
+            fact_sheet=args["fact_sheet"],
+            file=args.get("file"),
+            source_date=args.get("source_date"),
+            expiry=args.get("expiry"),
+        )
+    if name == "list_documents":
+        return list_documents()
+    if name == "read_document":
+        return read_document(name=args["name"])
     raise ValueError(f"unknown tool: {name!r}")
 
 
@@ -1119,6 +1169,7 @@ class AnthropicBackend(LLMBackend):
         system_prompt: str = "",
         history: list[dict[str, str]] | None = None,
         images: list[bytes] | None = None,
+        documents: list[bytes] | None = None,
     ) -> str:
         # Conversation history (if any) goes at the front of the messages
         # list so the model sees prior turns as context for the new one.
@@ -1126,11 +1177,31 @@ class AnthropicBackend(LLMBackend):
         # top of this during a single chat() call.
         messages: list[dict[str, Any]] = list(history) if history else []
 
-        if images:
+        if documents:
+            # PDFs stay on the main model (Opus): document extraction accuracy
+            # on dense legal/insurance text is the high-stakes, once-per-doc
+            # step the whole fact-sheet rides on — unlike high-volume receipt
+            # photos, which go to the cheaper VISION_MODEL below.
+            model = self.model
+            content: list[dict[str, Any]] = []
+            for pdf in documents:
+                content.append(
+                    {
+                        "type": "document",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "application/pdf",
+                            "data": base64.b64encode(pdf).decode("ascii"),
+                        },
+                    }
+                )
+            content.append({"type": "text", "text": user_message})
+            messages.append({"role": "user", "content": content})
+        elif images:
             # Per-call model swap: vision goes to Sonnet 4.6 (cheaper, equal
             # quality on parcel screenshots per the spike).
             model = VISION_MODEL
-            content: list[dict[str, Any]] = []
+            content = []
             for img in images:
                 content.append(
                     {
