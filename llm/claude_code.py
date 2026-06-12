@@ -33,6 +33,7 @@ class ClaudeCodeBackend(LLMBackend):
         system_prompt: str = "",
         history: list[dict[str, str]] | None = None,
         images: list[bytes] | None = None,
+        documents: list[bytes] | None = None,
     ) -> str:
         # `history` is accepted to satisfy the LLMBackend interface but
         # intentionally ignored in v0.1.1 — see
@@ -47,6 +48,13 @@ class ClaudeCodeBackend(LLMBackend):
                 "implemented here; dropping. Switch LLM_BACKEND=anthropic to "
                 "use vision.",
                 len(images),
+            )
+        if documents:
+            logger.warning(
+                "ClaudeCodeBackend received %d document(s) but PDF input is not "
+                "implemented here; dropping. Switch LLM_BACKEND=anthropic to "
+                "use documents.",
+                len(documents),
             )
 
         cmd = [

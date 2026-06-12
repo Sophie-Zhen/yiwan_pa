@@ -40,6 +40,7 @@ from prompts import (
 )
 from storage.history import append_turn, read_history
 from storage.markdown import get_stale_items, mark_stale_alerted
+from tools.documents import DOCS_DIR, slugify
 
 load_dotenv()
 logging.basicConfig(
@@ -93,11 +94,12 @@ async def _ask_llm(
     user_message: str,
     history: list[dict[str, str]] | None = None,
     images: list[bytes] | None = None,
+    documents: list[bytes] | None = None,
 ) -> str:
     """Run a single LLM round-trip with the personal-assistant system prompt."""
     system_prompt = render_personal_assistant(USER_NAME)
     return await asyncio.to_thread(
-        backend.chat, user_message, system_prompt, history, images
+        backend.chat, user_message, system_prompt, history, images, documents
     )
 
 
@@ -174,6 +176,62 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     # was sent, but NOT the bytes — they would balloon the JSONL file and the
     # model can't re-look at past images on subsequent turns anyway.
     history_text = f"[图片] {caption}" if caption else "[图片]"
+    append_turn(chat_id, history_text, reply)
+
+    logger.info("bot: %s", reply[:200])
+    await update.message.reply_text(reply)
+
+
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """PDF document messages — typically an insurance policy or similar to be
+    distilled into a fact-sheet. The original PDF is saved to data/documents/
+    (source of truth / future full-read fallback); the bytes are sent to the
+    LLM (Opus, via the documents path) which extracts a fact-sheet and asks the
+    user to confirm before saving it.
+    """
+    chat_id = update.effective_chat.id
+    if not _is_authorized(update):
+        logger.warning("unauthorized chat %s blocked (document)", chat_id)
+        return
+
+    doc = update.message.document
+    fname = doc.file_name or "document.pdf"
+    mime = (doc.mime_type or "").lower()
+    if "pdf" not in mime and not fname.lower().endswith(".pdf"):
+        await update.message.reply_text("目前只支持 PDF 文档。")
+        return
+    if doc.file_size and doc.file_size > 20 * 1024 * 1024:
+        await update.message.reply_text("这个 PDF 太大了（>20MB），发个小一点的版本吧。")
+        return
+
+    file = await context.bot.get_file(doc.file_id)
+    pdf_bytes = bytes(await file.download_as_bytearray())
+
+    # Persist the original immediately, before any LLM work.
+    stem = fname[:-4] if fname.lower().endswith(".pdf") else fname
+    saved_name = f"{slugify(stem)}.pdf"
+    DOCS_DIR.mkdir(parents=True, exist_ok=True)
+    (DOCS_DIR / saved_name).write_bytes(pdf_bytes)
+
+    caption = (update.message.caption or "").strip()
+    logger.info(
+        "user (chat %s, document %r %d bytes, caption=%r) saved as %s",
+        chat_id, fname, len(pdf_bytes), caption, saved_name,
+    )
+
+    history = read_history(chat_id)
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    user_message = (
+        f"[Now: {now_str}] [文档 PDF: {fname}，原件已存为 {saved_name}] {caption}".strip()
+    )
+
+    try:
+        reply = await _ask_llm(user_message, history=history, documents=[pdf_bytes])
+    except Exception as exc:
+        logger.exception("document backend.chat failed")
+        reply = f"[error] {exc}"
+
+    history_text = f"[文档 PDF: {fname}] {caption}".strip()
     append_turn(chat_id, history_text, reply)
 
     logger.info("bot: %s", reply[:200])
@@ -339,6 +397,7 @@ def main() -> None:
     app.add_handler(CommandHandler("active", cmd_active))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
 
     if app.job_queue is None:
         logger.warning(
