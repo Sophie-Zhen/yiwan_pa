@@ -17,6 +17,20 @@ Send the bot a Telegram message — anything from "Flight to London on the 29th,
 
 All state lives as plaintext markdown — no database, no vendor lock-in. Your todos are `cat`-able, `git diff`-able, hand-editable.
 
+## Beyond todos
+
+The same capture-and-act primitive now spans several domains of daily life, each with its own tools, storage, and (where useful) proactive reminders:
+
+- **International transhipment parcels** — track online orders through ordering → shipping → warehouse consolidation in a Google Sheet, with per-SKU pricing, weight apportioning, and exchange-rate conversion. OCRs e-commerce and warehouse-arrival screenshots.
+- **Fund 定投 (recurring investments)** — record monthly/weekly SIP debits and share confirmations from forwarded bank texts; query cumulative totals.
+- **家庭花销 (household spending)** — line-item grocery ledger (price-trend + "what we buy most" analysis) with receipt-photo OCR, an inventory watchlist with auto-restock, and low-stock reminders. Records big annual costs too, so monthly totals have no unexplained gap.
+- **Annual contract renewals** — remember energy/broadband/insurance expiry, remind to shop around before renewal, and compare this year's price to last year's.
+- **Document fact-sheets + Q&A** — forward an insurance PDF; the model extracts a fact-sheet once at ingest, then answers later questions ("免赔额多少") from the distillate without re-reading the file.
+- **CWI instructor logbook** — drafts Mountaineering Ireland DLOG entries after a climbing-instruction session, tracks progress toward the certificate's logbook targets, and reminds each evening to file them.
+- **Web search** — looks up current public facts (a business's phone number, opening hours) when the answer isn't already on hand.
+
+Each domain follows the same shape: a `tools/*.py` data layer, tool schemas the LLM can call, a section in the system prompt, and an optional daily reminder scheduler.
+
 ## Why I built it
 
 Some weeks too many plates spin at once: two job-search side projects, a flight to catch, a vegetable patch to water, party hosting on Friday. The pattern is consistent — if I don't capture a thought the moment it surfaces, it's gone. The cost shows up later as a missed thing.
@@ -73,7 +87,7 @@ That's the thesis underneath this project: **the best personal assistant isn't t
 - **`bot.py`** — `python-telegram-bot` long-poll loop, command + message handlers, daily JobQueue tasks for the morning + evening digests, conversation-history glue. Whitelists `TELEGRAM_USER_CHAT_ID` so the bot only responds to its owner.
 - **`scheduler.py`** — per-minute scan loop for per-item T-N push alerts. Reads `data/inbox.md` each tick, partitions un-fired declared offsets into normal vs. late, sends + records to the item's `alerted` field on the next pass.
 - **`llm/`** — `LLMBackend` interface plus two implementations (selected by `LLM_BACKEND` env var). The abstraction is real: each backend handles auth, agent looping, and tool execution differently, but the bot doesn't know.
-- **`llm/anthropic_api.py`** — a self-written agent loop on top of the `anthropic` SDK. Eight tools (`read_inbox`, `read_archive`, `append_to_inbox`, `update_inbox_item`, `append_to_notes`, `find_item`, `skip_remaining_alerts`, `set_status`), top-level prompt caching, adaptive thinking, typed exception handling.
+- **`llm/anthropic_api.py`** — a self-written agent loop on top of the `anthropic` SDK. 40+ tools spanning todos, transhipment parcels, investments, household spending + inventory, contracts, documents, and the CWI logbook — plus the Anthropic `web_search` server tool; top-level prompt caching, adaptive thinking, typed exception handling.
 - **`storage/markdown.py`** — typed parser/writer for `data/inbox.md` and `data/archive.md`. Each item is a level-2 markdown heading with `key: value` fields; format spec in `data/README.md`.
 - **`storage/history.py`** — per-chat conversation history as JSONL with a sliding window (6 turns OR 30 minutes, whichever is shorter).
 - **`prompts.py`** — system prompt for the assistant role, plus canned digest requests (morning + evening) for scheduled pushes.
@@ -94,7 +108,7 @@ Real design records live in [`docs/decisions/`](docs/decisions/) (ADR format). H
 - **[python-telegram-bot](https://python-telegram-bot.org/) 21+** — Telegram client + JobQueue scheduling
 - **[anthropic](https://docs.anthropic.com/) Python SDK** — production LLM backend
 - **Claude Opus 4.7** — primary model (Anthropic API). Sonnet 4.6 also tested.
-- **Docker + Docker Compose** — production deployment on Raspberry Pi 4
+- **Docker + Docker Compose** — production deployment on Raspberry Pi 5
 - **[Tailscale](https://tailscale.com/)** — remote access to the Pi for ops
 - **Standard library only** for storage, scheduling math, JSON handling — no DB, no ORM
 

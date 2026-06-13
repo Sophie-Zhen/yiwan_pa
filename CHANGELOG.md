@@ -15,6 +15,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - **`find_item` tool** (commit `f70f485`) — searches both `inbox.md` and `archive.md`. Closes two trust bugs from v0.1.1 dogfeed where the bot saying "no such item" based on inbox alone overlooked the archived copy.
 - **`append_to_notes` tool** (commit `0507fbe`) — appends to existing notes without overwriting. `update_inbox_item(field=notes, ...)` keeps overwrite semantics and its description now warns to use `append_to_notes` for additive intent.
 - **`skip_remaining_alerts` tool** (commit `44a0ed3`) — cancels the remaining T-N pushes for an item (e.g. when the user replies "skip flight" to a late alert) without losing the declared `alerts` configuration.
+- **Transhipment parcel tracking** — Google Sheet workflow for international forwarding: capture orders, settle carrier-consolidated shipping by weight, apply exchange rate; OCRs e-commerce + warehouse-arrival screenshots. Multi-SKU-per-parcel aware.
+- **Fund 定投 (recurring investments)** — Google Sheet plans + debit ledger; records debits / share-confirmations from forwarded bank texts (upsert by date+fund); cumulative-total queries.
+- **家庭花销 (household spending)** (PRs #5, #6, #10) — line-item ledger with receipt-photo OCR, price-trend / top-items queries, an inventory watchlist with auto-restock + daily low-stock reminders, and `spend_summary` (records big annual costs as line items so monthly totals have no unexplained gap).
+- **`web_search` server tool** (PR #7) — Anthropic-hosted web search for current public facts (phone numbers, opening hours), with `pause_turn` resume handling in the agent loop.
+- **Annual contract renewal reminders** (PR #8) — track energy / broadband / insurance expiry in `data/contracts.md`; daily reminder before renewal; rotates price year-over-year for comparison.
+- **Document fact-sheets + Q&A** (PR #9) — forward an insurance PDF; Opus extracts a fact-sheet once at ingest (`data/documents/`), then later questions are answered from the distillate without re-reading the file.
+- **CWI instructor logbook** (PR #12) — drafts Mountaineering Ireland DLOG entries after a climbing-instruction session, stores brief metadata in `data/cwi_log.md`, tracks progress vs the certificate's logbook targets, and reminds each evening to file pending sessions.
+- **Google Drive backup of `data/`** (PR #11) — `scripts/backup_data.sh` rclone-syncs the Pi's runtime data (gitignored, SD-card-only) to Drive with a versioned archive, using the `drive.file` least-privilege scope; cron at 03:00.
 
 ### Changed
 
