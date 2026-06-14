@@ -25,10 +25,11 @@ Reminder model: a daily scheduler (contract_scheduler.py) pings on `remind_on`.
 price, which re-arms next year's reminder.
 """
 import pathlib
-import re
 from dataclasses import dataclass
 from datetime import date
 from typing import Optional
+
+from storage import md_entities
 
 DATA_DIR = pathlib.Path(__file__).resolve().parent.parent / "data"
 CONTRACTS_PATH = DATA_DIR / "contracts.md"
@@ -43,8 +44,6 @@ VALID_STATUSES = {"active", "archived"}
 UPDATABLE_FIELDS = {
     "type", "expiry", "remind_on", "current_price", "prev_price", "status", "notes",
 }
-
-_FIELD_LINE = re.compile(r"^- (\w+):\s*(.*)$")
 
 
 @dataclass
@@ -75,24 +74,12 @@ class Contract:
 
 
 def _ensure_file() -> None:
-    if not CONTRACTS_PATH.exists():
-        CONTRACTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        CONTRACTS_PATH.write_text(CONTRACTS_HEADER + "\n", encoding="utf-8")
+    md_entities.ensure_file(CONTRACTS_PATH, CONTRACTS_HEADER)
 
 
 def _parse(content: str) -> list[Contract]:
     contracts: list[Contract] = []
-    sections = re.split(r"^## ", content, flags=re.MULTILINE)[1:]
-    for sec in sections:
-        lines = sec.strip().split("\n")
-        if not lines:
-            continue
-        name = lines[0].strip()
-        fields: dict[str, str] = {}
-        for line in lines[1:]:
-            m = _FIELD_LINE.match(line.strip())
-            if m:
-                fields[m.group(1)] = m.group(2).strip()
+    for name, fields in md_entities.parse_sections(content):
         contracts.append(
             Contract(
                 name=name,
@@ -115,16 +102,7 @@ def _read() -> list[Contract]:
 
 
 def _write(contracts: list[Contract]) -> None:
-    body = "\n\n".join(c.to_markdown() for c in contracts)
-    sep = "\n\n" if body else ""
-    CONTRACTS_PATH.write_text(CONTRACTS_HEADER + sep + body + "\n", encoding="utf-8")
-
-
-def _validate_date(label: str, value: str) -> None:
-    try:
-        date.fromisoformat(value)
-    except ValueError as exc:
-        raise ValueError(f"{label} must be YYYY-MM-DD, got {value!r}") from exc
+    md_entities.write_entities(CONTRACTS_PATH, CONTRACTS_HEADER, contracts)
 
 
 def _find(contracts: list[Contract], name: str) -> Optional[Contract]:
@@ -150,11 +128,11 @@ def add_contract(
     """
     if contract_type not in VALID_TYPES:
         raise ValueError(f"type must be one of {sorted(VALID_TYPES)}, got {contract_type!r}")
-    _validate_date("expiry", expiry)
+    md_entities.validate_date("expiry", expiry)
     if remind_on is None:
         remind_on = expiry
     else:
-        _validate_date("remind_on", remind_on)
+        md_entities.validate_date("remind_on", remind_on)
 
     contracts = _read()
     if _find(contracts, name) is not None:
@@ -219,9 +197,9 @@ def renew_contract(
     remind_on) against the new expiry, so a "remind 7 days before" contract
     stays "7 days before" next year.
     """
-    _validate_date("new_expiry", new_expiry)
+    md_entities.validate_date("new_expiry", new_expiry)
     if new_remind_on is not None:
-        _validate_date("new_remind_on", new_remind_on)
+        md_entities.validate_date("new_remind_on", new_remind_on)
 
     contracts = _read()
     c = _find(contracts, name)
@@ -268,7 +246,7 @@ def update_contract(name: str, field: str, value: Optional[str]) -> dict:
     if field == "status" and value not in VALID_STATUSES:
         raise ValueError(f"status must be one of {sorted(VALID_STATUSES)}")
     if field in ("expiry", "remind_on") and value:
-        _validate_date(field, value)
+        md_entities.validate_date(field, value)
 
     contracts = _read()
     c = _find(contracts, name)
