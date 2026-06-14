@@ -279,16 +279,6 @@ def update_contract(name: str, field: str, value: Optional[str]) -> dict:
     return {"name": c.name, "field": field, "value": value}
 
 
-def find_contract(name: str) -> list[dict]:
-    """Substring search by name; returns matching contracts (any status)."""
-    needle = name.lower()
-    return [
-        {"name": c.name, "type": c.type, "expiry": c.expiry, "status": c.status,
-         "current_price": c.current_price, "prev_price": c.prev_price}
-        for c in _read() if needle in c.name.lower()
-    ]
-
-
 def mark_contract_reminded(name: str, date_str: str) -> dict:
     """Set last_reminded on a contract. Internal helper for the scheduler;
     NOT an LLM tool. Reminder idempotency lives here with
