@@ -12,13 +12,13 @@ pending entry is meant to nag each evening until she marks it recorded (reply
 '录好了' → cwi_log.mark_recorded). Same JobQueue shape as the other schedulers.
 """
 import logging
-import os
 from datetime import datetime
-from typing import Awaitable, Callable, Optional
+from typing import Optional
 
 from dotenv import load_dotenv
 from telegram.ext import Application, ContextTypes
 
+import scheduler_base
 from tools import cwi_log
 
 # Load .env explicitly: USER_CHAT_ID is read at import, before bot.py has loaded
@@ -27,13 +27,8 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-REMINDER_HOUR = int(os.getenv("CWI_REMINDER_HOUR", "19"))
-SCAN_INTERVAL_SECONDS = 3600
-
-_chat_id_env = os.getenv("TELEGRAM_USER_CHAT_ID", "").strip()
-USER_CHAT_ID: Optional[int] = int(_chat_id_env) if _chat_id_env else None
-
-SendFn = Callable[[int, str], Awaitable[None]]
+REMINDER_HOUR = scheduler_base.reminder_hour("CWI_REMINDER_HOUR", 19)
+USER_CHAT_ID: Optional[int] = scheduler_base.load_chat_id()
 
 _KIND_CN = {"instructed": "带组", "personal": "个人攀岩"}
 
@@ -50,13 +45,11 @@ def _format_line(e: dict) -> str:
 
 async def _scan_once(
     now: datetime,
-    send_fn: SendFn,
+    send_fn: scheduler_base.SendFn,
     force_hour: bool = False,
 ) -> list[int]:
     """Core scan. Returns the ids of entries reminded about."""
-    if USER_CHAT_ID is None:
-        return []
-    if not force_hour and now.hour != REMINDER_HOUR:
+    if not scheduler_base.should_scan(USER_CHAT_ID, now, REMINDER_HOUR, force_hour):
         return []
 
     try:
@@ -92,18 +85,9 @@ async def scan_cwi_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def register_jobs(app: Application) -> None:
-    if app.job_queue is None:
-        logger.warning(
-            "cwi scheduler: JobQueue unavailable, scan_cwi_reminders not scheduled"
-        )
-        return
     # first=480: stagger from parcels(10)/investment(300)/inventory(360)/contract(420).
-    app.job_queue.run_repeating(
-        scan_cwi_reminders,
-        interval=SCAN_INTERVAL_SECONDS,
-        first=480,
-    )
-    logger.info(
-        "cwi scheduler: scan every %ds, fires at hour=%d",
-        SCAN_INTERVAL_SECONDS, REMINDER_HOUR,
+    scheduler_base.register_hourly(
+        app, scan_cwi_reminders,
+        first=480, log_label="cwi scheduler",
+        reminder_hour=REMINDER_HOUR, logger=logger,
     )
