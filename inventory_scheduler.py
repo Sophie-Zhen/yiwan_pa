@@ -20,7 +20,7 @@ from typing import Awaitable, Callable, Optional
 
 from telegram.ext import Application, ContextTypes
 
-from tools import expenses as exp
+from tools import inventory
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ def _format_line(it: dict) -> str:
     last purchase (the thing that tripped the cadence).
     """
     remaining = f"{_qty_str(it.get('quantity', ''))} {it.get('unit', '') or ''}".strip()
-    if it.get("strategy") == exp.STRATEGY_THRESHOLD:
+    if it.get("strategy") == inventory.STRATEGY_THRESHOLD:
         return f"• {it['item']}：还剩 {remaining}（阈值 {_qty_str(it.get('threshold', ''))}）"
     days = it.get("days_since_purchase")
     days_txt = f"，已 {days} 天没买" if days is not None else ""
@@ -76,7 +76,7 @@ async def _scan_once(
     today_str = now.date().strftime("%Y-%m-%d")
 
     try:
-        due = exp.items_needing_restock_reminder()
+        due = inventory.items_needing_restock_reminder()
     except Exception:
         logger.exception("inventory scheduler: items_needing_restock_reminder failed")
         return []
@@ -93,7 +93,7 @@ async def _scan_once(
     reminded: list[str] = []
     for it in due:
         try:
-            exp.mark_inventory_reminded(it["row"], today_str)
+            inventory.mark_inventory_reminded(it["row"], today_str)
         except Exception:
             # Send succeeded, mark failed — next tick re-fires. One duplicate
             # reminder beats losing the alert.

@@ -20,6 +20,7 @@ import gspread
 from dotenv import load_dotenv
 
 from tools import expenses as exp
+from tools import inventory as inv
 
 load_dotenv()
 
@@ -45,7 +46,7 @@ def main() -> None:
 
     try:
         print("\n=== track_item (cycle + threshold) ===")
-        c = exp.track_item(
+        c = inv.track_item(
             item="TEST_coffee", unit="bag", strategy="cycle",
             threshold=14, current_quantity=2, notes="周期约2周",
         )
@@ -53,7 +54,7 @@ def main() -> None:
         inv_rows.append(c["row"])
         assert c["operation"] == "inserted"
 
-        t = exp.track_item(
+        t = inv.track_item(
             item="TEST_cement", unit="bag", strategy="threshold",
             threshold=1, current_quantity=3,
         )
@@ -62,21 +63,21 @@ def main() -> None:
 
         print("\n=== validation: threshold strategy needs threshold ===")
         try:
-            exp.track_item(item="TEST_bad", unit="x", strategy="threshold")
+            inv.track_item(item="TEST_bad", unit="x", strategy="threshold")
             assert False, "should raise"
         except ValueError as e:
             print(f"ok: {e}")
         try:
-            exp.track_item(item="TEST_bad", unit="x", strategy="nonsense")
+            inv.track_item(item="TEST_bad", unit="x", strategy="nonsense")
             assert False, "should raise"
         except ValueError as e:
             print(f"ok: {e}")
 
         print("\n=== track_item upsert preserves quantity ===")
         # Re-call to change threshold only; quantity must stay 2.
-        c2 = exp.track_item(item="TEST_coffee", unit="bag", strategy="cycle", threshold=10)
+        c2 = inv.track_item(item="TEST_coffee", unit="bag", strategy="cycle", threshold=10)
         assert c2["operation"] == "updated"
-        coffee = _get(exp.list_inventory(), "TEST_coffee")
+        coffee = _get(inv.list_inventory(), "TEST_coffee")
         assert coffee["quantity"] == 2, f"quantity wiped on update: {coffee['quantity']}"
         assert float(coffee["threshold"]) == 10
         print(f"ok: threshold→10, quantity preserved at {coffee['quantity']}")
@@ -102,42 +103,42 @@ def main() -> None:
         assert upd["TEST_cement"]["new_quantity"] == 4   # 3 + 1
         assert "TEST_untracked chips" not in upd
         # untracked item did not appear in inventory
-        assert not any(r["item"] == "TEST_untracked chips" for r in exp.list_inventory())
+        assert not any(r["item"] == "TEST_untracked chips" for r in inv.list_inventory())
         # last_purchase + last_price refreshed
-        coffee = _get(exp.list_inventory(), "TEST_coffee")
+        coffee = _get(inv.list_inventory(), "TEST_coffee")
         assert coffee["last_purchase_date"] == "2026-06-11"
         assert float(coffee["last_unit_price"]) == 7.99
         print(f"ok: coffee 2→4, cement 3→4, untracked stayed out, last_purchase refreshed")
 
         print("\n=== adjust_inventory (consumption delta + absolute) ===")
-        a1 = exp.adjust_inventory(item="TEST_cement", delta=-2)
+        a1 = inv.adjust_inventory(item="TEST_cement", delta=-2)
         print(a1)
         assert a1["new_quantity"] == 2  # 4 - 2
-        a2 = exp.adjust_inventory(item="TEST_coffee", set_quantity=0.5)
+        a2 = inv.adjust_inventory(item="TEST_coffee", set_quantity=0.5)
         print(a2)
         assert a2["new_quantity"] == 0.5
 
         print("\n=== adjust_inventory errors ===")
         try:
-            exp.adjust_inventory(item="TEST_nonexistent", delta=-1)
+            inv.adjust_inventory(item="TEST_nonexistent", delta=-1)
             assert False
         except ValueError as e:
             print(f"ok: not tracked → {e}")
 
         print("\n=== list_inventory low detection ===")
         # cement: threshold strategy, qty 2, min 1 → not low. Drop to 1 → low.
-        exp.adjust_inventory(item="TEST_cement", set_quantity=1)
-        cement = _get(exp.list_inventory(), "TEST_cement")
+        inv.adjust_inventory(item="TEST_cement", set_quantity=1)
+        cement = _get(inv.list_inventory(), "TEST_cement")
         assert cement["low"] is True, "cement at threshold should be low"
         # coffee: cycle, interval 10 days. Set last_purchase 20 days ago → low.
         old_date = (date.today() - timedelta(days=20)).isoformat()
-        exp.track_item(item="TEST_coffee", unit="bag", strategy="cycle",
+        inv.track_item(item="TEST_coffee", unit="bag", strategy="cycle",
                        threshold=10, last_purchase_date=old_date)
-        coffee = _get(exp.list_inventory(), "TEST_coffee")
+        coffee = _get(inv.list_inventory(), "TEST_coffee")
         assert coffee["days_since_purchase"] == 20
         assert coffee["low"] is True, "coffee 20d > 10d interval should be low"
 
-        low_list = exp.list_inventory(low_only=True)
+        low_list = inv.list_inventory(low_only=True)
         low_names = {r["item"] for r in low_list if r["item"].startswith("TEST_")}
         assert low_names == {"TEST_coffee", "TEST_cement"}, low_names
         print(f"ok: low_only returns {low_names}")
@@ -145,7 +146,7 @@ def main() -> None:
         print("\n[all inventory assertions passed]")
     finally:
         print(f"\ncleaning up inventory rows {inv_rows}, ledger rows {ledger_rows}")
-        _delete(exp.INVENTORY_TAB, inv_rows)
+        _delete(inv.INVENTORY_TAB, inv_rows)
         _delete(exp.LEDGER_TAB, ledger_rows)
         print("cleanup done")
 
