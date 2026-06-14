@@ -21,13 +21,13 @@ sharing one date and store. Writing them in one call keeps the LLM from firing
 N separate tool calls per receipt, and keeps the rows visually grouped.
 """
 
-import os
-
 from datetime import date
 
 import gspread
 from dotenv import load_dotenv
 from gspread.exceptions import WorksheetNotFound
+
+from storage import sheets
 
 load_dotenv()
 
@@ -87,42 +87,12 @@ VALID_STRATEGIES = {STRATEGY_CYCLE, STRATEGY_THRESHOLD}
 VALID_INVENTORY_STATUSES = {"active", "archived"}
 
 
-def _spreadsheet() -> gspread.Spreadsheet:
-    client = gspread.service_account(filename=os.environ["GOOGLE_SHEETS_CREDENTIALS"])
-    return client.open_by_key(os.environ["EXPENSES_SHEET_ID"])
-
-
 def _ledger_tab() -> gspread.Worksheet:
-    return _spreadsheet().worksheet(LEDGER_TAB)
+    return sheets.open_sheet("EXPENSES_SHEET_ID").worksheet(LEDGER_TAB)
 
 
 def _inventory_tab() -> gspread.Worksheet:
-    return _spreadsheet().worksheet(INVENTORY_TAB)
-
-
-def _find_first_empty_row(tab: gspread.Worksheet) -> int:
-    """First row (>=2) whose 日期 column is empty.
-
-    Sequentially fills rows 2, 3, ... regardless of phantom structure. Mirrors
-    the parcels.py / investments.py workaround for banded ranges making
-    append_row jump rows.
-    """
-    all_values = tab.get_all_values()
-    for i, row in enumerate(all_values[1:], start=2):
-        cell = row[COL_DATE - 1] if len(row) >= COL_DATE else ""
-        if not cell:
-            return i
-    return len(all_values) + 1
-
-
-def _to_float(raw: str) -> float:
-    """Parse a numeric cell to float; empty / non-numeric → 0.0."""
-    if not raw:
-        return 0.0
-    try:
-        return float(raw)
-    except ValueError:
-        return 0.0
+    return sheets.open_sheet("EXPENSES_SHEET_ID").worksheet(INVENTORY_TAB)
 
 
 def record_purchase(
@@ -153,7 +123,7 @@ def record_purchase(
         raise ValueError("items must be a non-empty list")
 
     tab = _ledger_tab()
-    start_row = _find_first_empty_row(tab)
+    start_row = sheets.first_empty_row(tab, COL_DATE)
 
     rows: list[list] = []
     for offset, it in enumerate(items):
@@ -237,8 +207,8 @@ def _apply_purchase_to_inventory(purchase_date: str, items: list[dict]) -> list[
     updates: list[dict] = []
     cells: list[gspread.cell.Cell] = []
     for i, row in enumerate(all_values[1:], start=2):
-        name = row[INV_COL_ITEM - 1] if len(row) >= INV_COL_ITEM else ""
-        status = row[INV_COL_STATUS - 1] if len(row) >= INV_COL_STATUS else ""
+        name = sheets.cell(row, INV_COL_ITEM)
+        status = sheets.cell(row, INV_COL_STATUS)
         if not name or status == "archived":
             continue
         name_lower = name.lower()
@@ -257,7 +227,7 @@ def _apply_purchase_to_inventory(purchase_date: str, items: list[dict]) -> list[
                 last_price = float(up)
 
         if added > 0:
-            old = _to_float(row[INV_COL_QUANTITY - 1] if len(row) >= INV_COL_QUANTITY else "")
+            old = sheets.to_float(sheets.cell(row, INV_COL_QUANTITY))
             new_q = old + added
             cells.append(gspread.cell.Cell(i, INV_COL_QUANTITY, new_q))
             cells.append(gspread.cell.Cell(i, INV_COL_LAST_PURCHASE, purchase_date))
@@ -292,11 +262,11 @@ def find_purchase(
 
     matches: list[dict] = []
     for i, row in enumerate(all_values[1:], start=2):
-        d = row[COL_DATE - 1] if len(row) >= COL_DATE else ""
+        d = sheets.cell(row, COL_DATE)
         if not d:
             continue
-        name = row[COL_ITEM - 1] if len(row) >= COL_ITEM else ""
-        st = row[COL_STORE - 1] if len(row) >= COL_STORE else ""
+        name = sheets.cell(row, COL_ITEM)
+        st = sheets.cell(row, COL_STORE)
         if item_lower is not None and item_lower not in name.lower():
             continue
         if store_lower is not None and store_lower not in st.lower():
@@ -310,12 +280,12 @@ def find_purchase(
             "date": d,
             "store": st,
             "item": name,
-            "quantity": row[COL_QUANTITY - 1] if len(row) >= COL_QUANTITY else "",
-            "unit": row[COL_UNIT - 1] if len(row) >= COL_UNIT else "",
-            "unit_price": row[COL_UNIT_PRICE - 1] if len(row) >= COL_UNIT_PRICE else "",
-            "subtotal": row[COL_SUBTOTAL - 1] if len(row) >= COL_SUBTOTAL else "",
-            "category": row[COL_CATEGORY - 1] if len(row) >= COL_CATEGORY else "",
-            "notes": row[COL_NOTES - 1] if len(row) >= COL_NOTES else "",
+            "quantity": sheets.cell(row, COL_QUANTITY),
+            "unit": sheets.cell(row, COL_UNIT),
+            "unit_price": sheets.cell(row, COL_UNIT_PRICE),
+            "subtotal": sheets.cell(row, COL_SUBTOTAL),
+            "category": sheets.cell(row, COL_CATEGORY),
+            "notes": sheets.cell(row, COL_NOTES),
         })
     return matches
 
@@ -370,8 +340,8 @@ def top_items(
             key, {"item": r["item"], "times": 0, "quantity": 0.0, "spend": 0.0}
         )
         bucket["times"] += 1
-        bucket["quantity"] += _to_float(str(r["quantity"]))
-        bucket["spend"] += _to_float(str(r["subtotal"]))
+        bucket["quantity"] += sheets.to_float(str(r["quantity"]))
+        bucket["spend"] += sheets.to_float(str(r["subtotal"]))
 
     sort_key = {"spend": "spend", "count": "times", "quantity": "quantity"}[by]
     ranked = sorted(agg.values(), key=lambda b: b[sort_key], reverse=True)
@@ -401,7 +371,7 @@ def spend_summary(since: str | None = None, until: str | None = None) -> dict:
     by_category: dict[str, float] = {}
     total = 0.0
     for r in rows:
-        amount = _to_float(str(r["subtotal"]))
+        amount = sheets.to_float(str(r["subtotal"]))
         total += amount
         category = r["category"] or "未分类"
         by_category[category] = by_category.get(category, 0.0) + amount
@@ -419,15 +389,6 @@ def spend_summary(since: str | None = None, until: str | None = None) -> dict:
 
 
 # --- 库存 (inventory) ---------------------------------------------------------
-
-def _find_first_empty_inventory_row(tab: gspread.Worksheet) -> int:
-    all_values = tab.get_all_values()
-    for i, row in enumerate(all_values[1:], start=2):
-        cell = row[INV_COL_ITEM - 1] if len(row) >= INV_COL_ITEM else ""
-        if not cell:
-            return i
-    return len(all_values) + 1
-
 
 def track_item(
     item: str,
@@ -467,46 +428,37 @@ def track_item(
     existing_row: int | None = None
     existing: list[str] | None = None
     for i, row in enumerate(all_values[1:], start=2):
-        name = row[INV_COL_ITEM - 1] if len(row) >= INV_COL_ITEM else ""
+        name = sheets.cell(row, INV_COL_ITEM)
         if name.lower() == item.lower():
             existing_row = i
             existing = row
             break
 
-    def _keep(col: int) -> str:
-        if existing is None:
-            return ""
-        return existing[col - 1] if len(existing) >= col else ""
-
     row = [""] * INV_NUM_COLS
     row[INV_COL_ITEM - 1] = item
     row[INV_COL_QUANTITY - 1] = (
         current_quantity if current_quantity is not None
-        else (_keep(INV_COL_QUANTITY) if existing else 0)
+        else (sheets.keep(existing, INV_COL_QUANTITY) if existing else 0)
     )
     row[INV_COL_UNIT - 1] = unit
     row[INV_COL_STRATEGY - 1] = strategy
     if threshold is not None:
         row[INV_COL_THRESHOLD - 1] = threshold
     elif existing:
-        row[INV_COL_THRESHOLD - 1] = _keep(INV_COL_THRESHOLD)
-    row[INV_COL_LAST_PURCHASE - 1] = last_purchase_date if last_purchase_date is not None else _keep(INV_COL_LAST_PURCHASE)
+        row[INV_COL_THRESHOLD - 1] = sheets.keep(existing, INV_COL_THRESHOLD)
+    row[INV_COL_LAST_PURCHASE - 1] = last_purchase_date if last_purchase_date is not None else sheets.keep(existing, INV_COL_LAST_PURCHASE)
     if last_unit_price is not None:
         row[INV_COL_LAST_PRICE - 1] = last_unit_price
     elif existing:
-        row[INV_COL_LAST_PRICE - 1] = _keep(INV_COL_LAST_PRICE)
+        row[INV_COL_LAST_PRICE - 1] = sheets.keep(existing, INV_COL_LAST_PRICE)
     row[INV_COL_STATUS - 1] = "active"
     # Preserve reminder state across re-tracking so changing a setting doesn't
     # silently re-arm (or suppress) a restock reminder.
-    row[INV_COL_LAST_REMINDED - 1] = _keep(INV_COL_LAST_REMINDED)
-    row[INV_COL_NOTES - 1] = notes if notes is not None else _keep(INV_COL_NOTES)
+    row[INV_COL_LAST_REMINDED - 1] = sheets.keep(existing, INV_COL_LAST_REMINDED)
+    row[INV_COL_NOTES - 1] = notes if notes is not None else sheets.keep(existing, INV_COL_NOTES)
 
-    target_row = existing_row if existing_row is not None else _find_first_empty_inventory_row(tab)
-    tab.update(
-        range_name=f"A{target_row}:{INV_LAST_COL}{target_row}",
-        values=[row],
-        value_input_option="USER_ENTERED",
-    )
+    target_row = existing_row if existing_row is not None else sheets.first_empty_row(tab, INV_COL_ITEM)
+    sheets.write_row(tab, target_row, row, INV_LAST_COL)
     return {
         "row": target_row,
         "item": item,
@@ -539,8 +491,8 @@ def adjust_inventory(
     item_lower = item.lower()
     matches: list[tuple[int, list[str]]] = []
     for i, row in enumerate(all_values[1:], start=2):
-        name = row[INV_COL_ITEM - 1] if len(row) >= INV_COL_ITEM else ""
-        status = row[INV_COL_STATUS - 1] if len(row) >= INV_COL_STATUS else ""
+        name = sheets.cell(row, INV_COL_ITEM)
+        status = sheets.cell(row, INV_COL_STATUS)
         if name and status != "archived" and item_lower in name.lower():
             matches.append((i, row))
 
@@ -554,7 +506,7 @@ def adjust_inventory(
 
     r, row = matches[0]
     name = row[INV_COL_ITEM - 1]
-    old = _to_float(row[INV_COL_QUANTITY - 1] if len(row) >= INV_COL_QUANTITY else "")
+    old = sheets.to_float(sheets.cell(row, INV_COL_QUANTITY))
     if set_quantity is not None:
         new_q = float(set_quantity)
     else:
@@ -589,17 +541,17 @@ def list_inventory(status_filter: str | None = "active", low_only: bool = False)
 
     out: list[dict] = []
     for i, row in enumerate(all_values[1:], start=2):
-        name = row[INV_COL_ITEM - 1] if len(row) >= INV_COL_ITEM else ""
+        name = sheets.cell(row, INV_COL_ITEM)
         if not name:
             continue
-        status = row[INV_COL_STATUS - 1] if len(row) >= INV_COL_STATUS else ""
+        status = sheets.cell(row, INV_COL_STATUS)
         if status_filter is not None and status != status_filter:
             continue
 
-        strategy = row[INV_COL_STRATEGY - 1] if len(row) >= INV_COL_STRATEGY else ""
-        qty = _to_float(row[INV_COL_QUANTITY - 1] if len(row) >= INV_COL_QUANTITY else "")
-        threshold_raw = row[INV_COL_THRESHOLD - 1] if len(row) >= INV_COL_THRESHOLD else ""
-        last_purchase = row[INV_COL_LAST_PURCHASE - 1] if len(row) >= INV_COL_LAST_PURCHASE else ""
+        strategy = sheets.cell(row, INV_COL_STRATEGY)
+        qty = sheets.to_float(sheets.cell(row, INV_COL_QUANTITY))
+        threshold_raw = sheets.cell(row, INV_COL_THRESHOLD)
+        last_purchase = sheets.cell(row, INV_COL_LAST_PURCHASE)
 
         days_since: int | None = None
         if last_purchase:
@@ -621,16 +573,16 @@ def list_inventory(status_filter: str | None = "active", low_only: bool = False)
             "row": i,
             "item": name,
             "quantity": qty,
-            "unit": row[INV_COL_UNIT - 1] if len(row) >= INV_COL_UNIT else "",
+            "unit": sheets.cell(row, INV_COL_UNIT),
             "strategy": strategy,
             "threshold": threshold_raw,
             "last_purchase_date": last_purchase,
-            "last_unit_price": row[INV_COL_LAST_PRICE - 1] if len(row) >= INV_COL_LAST_PRICE else "",
+            "last_unit_price": sheets.cell(row, INV_COL_LAST_PRICE),
             "days_since_purchase": days_since,
             "low": low,
             "status": status,
-            "last_reminded": row[INV_COL_LAST_REMINDED - 1] if len(row) >= INV_COL_LAST_REMINDED else "",
-            "notes": row[INV_COL_NOTES - 1] if len(row) >= INV_COL_NOTES else "",
+            "last_reminded": sheets.cell(row, INV_COL_LAST_REMINDED),
+            "notes": sheets.cell(row, INV_COL_NOTES),
         })
     return out
 

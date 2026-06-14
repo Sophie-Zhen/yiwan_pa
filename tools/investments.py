@@ -32,10 +32,10 @@ be a debit-only text (record_investment with only A-D) or a consolidated text
 then update_investment_confirmation).
 """
 
-import os
-
 import gspread
 from dotenv import load_dotenv
+
+from storage import sheets
 
 load_dotenv()
 
@@ -72,31 +72,12 @@ VALID_PLAN_STATUSES = {"active", "paused", "ended"}
 VALID_LEDGER_STATUSES = {"已扣款", "已确认", "已跳过", "失败"}
 
 
-def _spreadsheet() -> gspread.Spreadsheet:
-    client = gspread.service_account(filename=os.environ["GOOGLE_SHEETS_CREDENTIALS"])
-    return client.open_by_key(os.environ["INVESTMENTS_SHEET_ID"])
-
-
 def _plan_tab() -> gspread.Worksheet:
-    return _spreadsheet().worksheet(PLAN_TAB)
+    return sheets.open_sheet("INVESTMENTS_SHEET_ID").worksheet(PLAN_TAB)
 
 
 def _ledger_tab() -> gspread.Worksheet:
-    return _spreadsheet().worksheet(LEDGER_TAB)
-
-
-def _find_first_empty_row(tab: gspread.Worksheet, key_col: int) -> int:
-    """First row (>=2) where the key column is empty.
-
-    Sequentially fills rows 2, 3, ... regardless of phantom structure. Mirrors
-    the parcels.py workaround for banded ranges making append_row jump rows.
-    """
-    all_values = tab.get_all_values()
-    for i, row in enumerate(all_values[1:], start=2):
-        cell = row[key_col - 1] if len(row) >= key_col else ""
-        if not cell:
-            return i
-    return len(all_values) + 1
+    return sheets.open_sheet("INVESTMENTS_SHEET_ID").worksheet(LEDGER_TAB)
 
 
 def add_investment_plan(
@@ -135,7 +116,7 @@ def add_investment_plan(
         schedule_day = day_of_week
 
     tab = _plan_tab()
-    target_row = _find_first_empty_row(tab, PLAN_COL_FUND)
+    target_row = sheets.first_empty_row(tab, PLAN_COL_FUND)
 
     row = [""] * PLAN_NUM_COLS
     row[PLAN_COL_FUND - 1] = fund
@@ -147,11 +128,7 @@ def add_investment_plan(
     if notes is not None:
         row[PLAN_COL_NOTES - 1] = notes
 
-    tab.update(
-        range_name=f"A{target_row}:{PLAN_LAST_COL}{target_row}",
-        values=[row],
-        value_input_option="USER_ENTERED",
-    )
+    sheets.write_row(tab, target_row, row, PLAN_LAST_COL)
     return {"row": target_row, "fund": fund, "frequency": frequency}
 
 
@@ -167,14 +144,14 @@ def list_investment_plans(status_filter: str | None = "active") -> list[dict]:
     all_values = tab.get_all_values()
     plans: list[dict] = []
     for i, row in enumerate(all_values[1:], start=2):
-        fund = row[PLAN_COL_FUND - 1] if len(row) >= PLAN_COL_FUND else ""
+        fund = sheets.cell(row, PLAN_COL_FUND)
         if not fund:
             continue
-        status = row[PLAN_COL_STATUS - 1] if len(row) >= PLAN_COL_STATUS else ""
+        status = sheets.cell(row, PLAN_COL_STATUS)
         if status_filter is not None and status != status_filter:
             continue
-        frequency = row[PLAN_COL_FREQUENCY - 1] if len(row) >= PLAN_COL_FREQUENCY else ""
-        schedule_day_raw = row[PLAN_COL_DAY - 1] if len(row) >= PLAN_COL_DAY else ""
+        frequency = sheets.cell(row, PLAN_COL_FREQUENCY)
+        schedule_day_raw = sheets.cell(row, PLAN_COL_DAY)
         day_of_month: int | None = None
         day_of_week: int | None = None
         if frequency == FREQUENCY_MONTHLY and schedule_day_raw:
@@ -188,11 +165,11 @@ def list_investment_plans(status_filter: str | None = "active") -> list[dict]:
             "frequency": frequency,
             "day_of_month": day_of_month,
             "day_of_week": day_of_week,
-            "planned_amount": row[PLAN_COL_AMOUNT - 1] if len(row) >= PLAN_COL_AMOUNT else "",
-            "start_date": row[PLAN_COL_START - 1] if len(row) >= PLAN_COL_START else "",
+            "planned_amount": sheets.cell(row, PLAN_COL_AMOUNT),
+            "start_date": sheets.cell(row, PLAN_COL_START),
             "status": status,
-            "last_reminded": row[PLAN_COL_LAST_REMINDED - 1] if len(row) >= PLAN_COL_LAST_REMINDED else "",
-            "notes": row[PLAN_COL_NOTES - 1] if len(row) >= PLAN_COL_NOTES else "",
+            "last_reminded": sheets.cell(row, PLAN_COL_LAST_REMINDED),
+            "notes": sheets.cell(row, PLAN_COL_NOTES),
         })
     return plans
 
@@ -217,7 +194,7 @@ def update_plan_status(fund: str, status: str) -> dict:
     tab = _plan_tab()
     all_values = tab.get_all_values()
     for i, row in enumerate(all_values[1:], start=2):
-        name = row[PLAN_COL_FUND - 1] if len(row) >= PLAN_COL_FUND else ""
+        name = sheets.cell(row, PLAN_COL_FUND)
         if name == fund:
             tab.update_cell(i, PLAN_COL_STATUS, status)
             return {"row": i, "fund": fund, "status": status}
@@ -259,21 +236,16 @@ def record_investment(
     existing_row: int | None = None
     existing: list[str] | None = None
     for i, row in enumerate(all_values[1:], start=2):
-        d = row[LEDGER_COL_DEBIT_DATE - 1] if len(row) >= LEDGER_COL_DEBIT_DATE else ""
-        f = row[LEDGER_COL_FUND - 1] if len(row) >= LEDGER_COL_FUND else ""
+        d = sheets.cell(row, LEDGER_COL_DEBIT_DATE)
+        f = sheets.cell(row, LEDGER_COL_FUND)
         if d == debit_date and f == fund:
             existing_row = i
             existing = row
             break
 
-    def _existing_cell(col: int) -> str:
-        if existing is None:
-            return ""
-        return existing[col - 1] if len(existing) >= col else ""
-
-    final_confirm_date = confirm_date if confirm_date is not None else _existing_cell(LEDGER_COL_CONFIRM_DATE)
-    final_shares = shares if shares is not None else _existing_cell(LEDGER_COL_SHARES)
-    final_notes = notes if notes is not None else _existing_cell(LEDGER_COL_NOTES)
+    final_confirm_date = confirm_date if confirm_date is not None else sheets.keep(existing, LEDGER_COL_CONFIRM_DATE)
+    final_shares = shares if shares is not None else sheets.keep(existing, LEDGER_COL_SHARES)
+    final_notes = notes if notes is not None else sheets.keep(existing, LEDGER_COL_NOTES)
 
     if status is None:
         status = "已确认" if (final_confirm_date and final_shares not in ("", None)) else "已扣款"
@@ -295,12 +267,8 @@ def record_investment(
     if final_notes:
         row[LEDGER_COL_NOTES - 1] = final_notes
 
-    target_row = existing_row if existing_row is not None else _find_first_empty_row(tab, LEDGER_COL_DEBIT_DATE)
-    tab.update(
-        range_name=f"A{target_row}:{LEDGER_LAST_COL}{target_row}",
-        values=[row],
-        value_input_option="USER_ENTERED",
-    )
+    target_row = existing_row if existing_row is not None else sheets.first_empty_row(tab, LEDGER_COL_DEBIT_DATE)
+    sheets.write_row(tab, target_row, row, LEDGER_LAST_COL)
     return {
         "row": target_row,
         "fund": fund,
@@ -328,9 +296,9 @@ def find_investment(
     matches: list[dict] = []
     fund_lower = fund.lower() if fund else None
     for i, row in enumerate(all_values[1:], start=2):
-        d = row[LEDGER_COL_DEBIT_DATE - 1] if len(row) >= LEDGER_COL_DEBIT_DATE else ""
-        f = row[LEDGER_COL_FUND - 1] if len(row) >= LEDGER_COL_FUND else ""
-        s = row[LEDGER_COL_STATUS - 1] if len(row) >= LEDGER_COL_STATUS else ""
+        d = sheets.cell(row, LEDGER_COL_DEBIT_DATE)
+        f = sheets.cell(row, LEDGER_COL_FUND)
+        s = sheets.cell(row, LEDGER_COL_STATUS)
         if not d:
             continue
         if debit_date is not None and d != debit_date:
@@ -343,12 +311,12 @@ def find_investment(
             "row": i,
             "debit_date": d,
             "fund": f,
-            "planned_amount": row[LEDGER_COL_PLANNED - 1] if len(row) >= LEDGER_COL_PLANNED else "",
-            "actual_amount": row[LEDGER_COL_ACTUAL - 1] if len(row) >= LEDGER_COL_ACTUAL else "",
-            "confirm_date": row[LEDGER_COL_CONFIRM_DATE - 1] if len(row) >= LEDGER_COL_CONFIRM_DATE else "",
-            "shares": row[LEDGER_COL_SHARES - 1] if len(row) >= LEDGER_COL_SHARES else "",
+            "planned_amount": sheets.cell(row, LEDGER_COL_PLANNED),
+            "actual_amount": sheets.cell(row, LEDGER_COL_ACTUAL),
+            "confirm_date": sheets.cell(row, LEDGER_COL_CONFIRM_DATE),
+            "shares": sheets.cell(row, LEDGER_COL_SHARES),
             "status": s,
-            "notes": row[LEDGER_COL_NOTES - 1] if len(row) >= LEDGER_COL_NOTES else "",
+            "notes": sheets.cell(row, LEDGER_COL_NOTES),
         })
     return matches
 
@@ -389,9 +357,9 @@ def investment_summary(
     year_prefix = f"{year}-" if year is not None else None
 
     for row in all_values[1:]:
-        d = row[LEDGER_COL_DEBIT_DATE - 1] if len(row) >= LEDGER_COL_DEBIT_DATE else ""
-        f = row[LEDGER_COL_FUND - 1] if len(row) >= LEDGER_COL_FUND else ""
-        s = row[LEDGER_COL_STATUS - 1] if len(row) >= LEDGER_COL_STATUS else ""
+        d = sheets.cell(row, LEDGER_COL_DEBIT_DATE)
+        f = sheets.cell(row, LEDGER_COL_FUND)
+        s = sheets.cell(row, LEDGER_COL_STATUS)
         if not d:
             continue
         if fund is not None and f != fund:
@@ -401,10 +369,10 @@ def investment_summary(
         if s == "已跳过" or s == "失败":
             continue
 
-        actual_raw = row[LEDGER_COL_ACTUAL - 1] if len(row) >= LEDGER_COL_ACTUAL else ""
-        shares_raw = row[LEDGER_COL_SHARES - 1] if len(row) >= LEDGER_COL_SHARES else ""
-        actual = float(actual_raw) if actual_raw else 0.0
-        sh = float(shares_raw) if shares_raw else 0.0
+        actual_raw = sheets.cell(row, LEDGER_COL_ACTUAL)
+        shares_raw = sheets.cell(row, LEDGER_COL_SHARES)
+        actual = sheets.to_float(actual_raw)
+        sh = sheets.to_float(shares_raw)
 
         total_debited += actual
         total_shares += sh
