@@ -88,6 +88,45 @@ async def _ask_llm(
     )
 
 
+# Telegram rejects a single message over 4096 chars with BadRequest("Message is
+# too long"). LLM replies (e.g. a multi-paragraph CWI DLOG draft) can exceed it,
+# so split into chunks. 4000 leaves margin.
+TELEGRAM_MAX_CHARS = 4000
+
+
+def _split_for_telegram(text: str, limit: int = TELEGRAM_MAX_CHARS) -> list[str]:
+    """Split a reply into <=limit-char chunks, preferring paragraph > line >
+    space boundaries over cutting mid-word."""
+    rest = (text or "").strip() or "(empty reply)"
+    chunks: list[str] = []
+    while len(rest) > limit:
+        window = rest[:limit]
+        cut = window.rfind("\n\n")
+        if cut < limit // 2:
+            cut = window.rfind("\n")
+        if cut < limit // 2:
+            cut = window.rfind(" ")
+        if cut <= 0:
+            cut = limit  # no good boundary — hard cut
+        chunks.append(rest[:cut].rstrip())
+        rest = rest[cut:].lstrip()
+    if rest:
+        chunks.append(rest)
+    return chunks
+
+
+async def _send_reply(message, text: str) -> None:
+    """Send a possibly-long LLM reply as one or more messages. A long reply used
+    to raise BadRequest('Message is too long') from reply_text — and because the
+    send sits outside the handler's try/except, that silently dropped the entire
+    reply. Splitting + a guarded send means a reply is never lost to length."""
+    for chunk in _split_for_telegram(text):
+        try:
+            await message.reply_text(chunk)
+        except Exception:
+            logger.exception("failed to send a reply chunk (%d chars)", len(chunk))
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     if not _is_authorized(update):
@@ -119,7 +158,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     append_turn(chat_id, text, reply)
 
     logger.info("bot: %s", reply[:200])
-    await update.message.reply_text(reply)
+    await _send_reply(update.message, reply)
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -166,7 +205,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     append_turn(chat_id, history_text, reply)
 
     logger.info("bot: %s", reply[:200])
-    await update.message.reply_text(reply)
+    await _send_reply(update.message, reply)
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -223,7 +262,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     append_turn(chat_id, history_text, reply)
 
     logger.info("bot: %s", reply[:200])
-    await update.message.reply_text(reply)
+    await _send_reply(update.message, reply)
 
 
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -244,7 +283,7 @@ async def cmd_digest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     except Exception as exc:
         logger.exception("digest failed")
         reply = f"[error] {exc}"
-    await update.message.reply_text(reply)
+    await _send_reply(update.message, reply)
 
 
 async def cmd_todos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -259,7 +298,7 @@ async def cmd_todos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as exc:
         logger.exception("todos failed")
         reply = f"[error] {exc}"
-    await update.message.reply_text(reply)
+    await _send_reply(update.message, reply)
 
 
 async def cmd_active(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
