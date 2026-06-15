@@ -129,6 +129,116 @@ def apply_purchase(purchase_date: str, items: list[dict]) -> list[dict]:
     return updates
 
 
+def apply_quantity_delta(lines: list[dict]) -> list[dict]:
+    """Apply SIGNED quantity deltas to matching active inventory rows — the
+    reverse/adjust counterpart of apply_purchase, used by expense corrections
+    (voiding a purchase, changing a line's quantity).
+
+    `lines` is [{item, quantity}] where quantity is a signed delta (negative to
+    remove). Matching mirrors apply_purchase exactly: an inventory name
+    (lowercased) that is a SUBSTRING of a line's item name; deltas are summed per
+    inventory row. Untracked items are silently skipped (symmetry with
+    apply_purchase). Only 当前数量 changes — 上次购买日/上次单价 are derived facts the
+    caller resyncs from the ledger via resync_last_purchase.
+
+    Returns [{item, delta, new_quantity}] for rows actually changed.
+    """
+    try:
+        tab = _inventory_tab()
+    except WorksheetNotFound:
+        return []
+
+    all_values = tab.get_all_values()
+    updates: list[dict] = []
+    cells: list[gspread.cell.Cell] = []
+    for i, row in enumerate(all_values[1:], start=2):
+        name = sheets.cell(row, INV_COL_ITEM)
+        status = sheets.cell(row, INV_COL_STATUS)
+        if not name or status == "archived":
+            continue
+        name_lower = name.lower()
+
+        # Substring match against EVERY active row, summed — intentionally the
+        # same matching apply_purchase uses (so reverse mirrors forward exactly).
+        # One ledger line can touch >1 watchlist row; that is by design (keep
+        # watchlist names distinctive), not a bug to guard against here.
+        delta = 0.0
+        for ln in lines:
+            if name_lower in ln["item"].lower():
+                delta += float(ln["quantity"])
+
+        if delta != 0:
+            old = sheets.to_float(sheets.cell(row, INV_COL_QUANTITY))
+            # Round to kill float dust (0.1×3 != exactly 0.3) and floor at 0: a
+            # reversal must never leave nonsensical negative stock (which would
+            # also flag the item low forever). apply_purchase only adds, so it
+            # can't produce this; the reversal path must guard it.
+            new_q = max(0.0, round(old + delta, 3))
+            cells.append(gspread.cell.Cell(i, INV_COL_QUANTITY, new_q))
+            updates.append(
+                {"item": name, "delta": round(delta, 3), "new_quantity": new_q}
+            )
+
+    if cells:
+        tab.update_cells(cells, value_input_option="USER_ENTERED")
+    return updates
+
+
+def resync_last_purchase(
+    item_name: str, last_date: str | None, last_price: float | None
+) -> dict | None:
+    """Set 上次购买日 / 上次单价 on the active inventory row whose name matches
+    item_name (exact, case-insensitive) to the given values, clearing to blank
+    when None. The caller (expenses) computes these from the most-recent
+    REMAINING ledger line after a correction, so the denormalized facts can't
+    drift from the ledger. Returns the update, or None if no active row matches.
+    """
+    try:
+        tab = _inventory_tab()
+    except WorksheetNotFound:
+        return None
+
+    all_values = tab.get_all_values()
+    for i, row in enumerate(all_values[1:], start=2):
+        name = sheets.cell(row, INV_COL_ITEM)
+        status = sheets.cell(row, INV_COL_STATUS)
+        if name and status != "archived" and name.lower() == item_name.lower():
+            cells = [
+                gspread.cell.Cell(i, INV_COL_LAST_PURCHASE, last_date or ""),
+                gspread.cell.Cell(
+                    i, INV_COL_LAST_PRICE, last_price if last_price is not None else ""
+                ),
+            ]
+            tab.update_cells(cells, value_input_option="USER_ENTERED")
+            return {
+                "row": i,
+                "item": name,
+                "last_purchase_date": last_date or "",
+                "last_unit_price": last_price,
+            }
+    return None
+
+
+def matching_items(line_names: list[str]) -> list[str]:
+    """Active watchlist names whose name is a substring of any given ledger line
+    name — i.e. the inventory items a set of ledger lines touches. Used by a void
+    to resync EVERY affected item's last-purchase facts, including items whose
+    net quantity delta is zero (so apply_quantity_delta wouldn't surface them).
+    """
+    try:
+        tab = _inventory_tab()
+    except WorksheetNotFound:
+        return []
+    lowered = [(n or "").lower() for n in line_names]
+    out: list[str] = []
+    for row in tab.get_all_values()[1:]:
+        name = sheets.cell(row, INV_COL_ITEM)
+        status = sheets.cell(row, INV_COL_STATUS)
+        if name and status != "archived" and any(name.lower() in ln for ln in lowered):
+            out.append(name)
+    return out
+
+
 def track_item(
     item: str,
     unit: str,
