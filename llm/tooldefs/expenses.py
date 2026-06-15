@@ -3,13 +3,15 @@
 Tool schemas + dispatch handlers for the expenses domain.
 """
 from tools.expenses import (
-    adjust_inventory,
     find_purchase,
-    list_inventory,
     price_history,
     record_purchase,
     spend_summary,
     top_items,
+)
+from tools.inventory import (
+    adjust_inventory,
+    list_inventory,
     track_item,
 )
 

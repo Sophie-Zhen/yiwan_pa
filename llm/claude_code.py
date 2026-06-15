@@ -34,6 +34,7 @@ class ClaudeCodeBackend(LLMBackend):
         history: list[dict[str, str]] | None = None,
         images: list[bytes] | None = None,
         documents: list[bytes] | None = None,
+        tools: list | None = None,
     ) -> str:
         # `history` is accepted to satisfy the LLMBackend interface but
         # intentionally ignored in v0.1.1 — see
@@ -42,6 +43,9 @@ class ClaudeCodeBackend(LLMBackend):
         # If we want true multi-turn here later, the path is `claude -p
         # --resume <session-id>` keyed on chat_id.
         del history
+        # `tools` is the routed per-message schema list for the SDK backend; the
+        # shell-out CLI manages its own tools, so it's accepted and dropped.
+        del tools
         if images:
             logger.warning(
                 "ClaudeCodeBackend received %d image(s) but vision is not "

@@ -29,7 +29,7 @@ import gspread
 from dotenv import load_dotenv
 
 import inventory_scheduler as sched
-from tools import expenses as exp
+from tools import inventory as inv
 
 load_dotenv()
 
@@ -40,7 +40,7 @@ def _delete(rows: list[int]) -> None:
     ss = gspread.service_account(filename=os.environ["GOOGLE_SHEETS_CREDENTIALS"]).open_by_key(
         os.environ["EXPENSES_SHEET_ID"]
     )
-    tab = ss.worksheet(exp.INVENTORY_TAB)
+    tab = ss.worksheet(inv.INVENTORY_TAB)
     for r in sorted(set(rows), reverse=True):
         tab.delete_rows(r)
 
@@ -56,15 +56,15 @@ async def test_scan() -> None:
     rows: list[int] = []
 
     # threshold item, qty at minimum → low
-    t = exp.track_item(item="TEST_S_cement", unit="bag", strategy="threshold",
+    t = inv.track_item(item="TEST_S_cement", unit="bag", strategy="threshold",
                        threshold=1, current_quantity=1)
     rows.append(t["row"])
     # cycle item, last bought 30d ago, interval 14 → low
-    c = exp.track_item(item="TEST_S_coffee", unit="bag", strategy="cycle",
+    c = inv.track_item(item="TEST_S_coffee", unit="bag", strategy="cycle",
                        threshold=14, current_quantity=1, last_purchase_date=far_past)
     rows.append(c["row"])
     # healthy threshold item, qty above minimum → not low
-    h = exp.track_item(item="TEST_S_rice", unit="bag", strategy="threshold",
+    h = inv.track_item(item="TEST_S_rice", unit="bag", strategy="threshold",
                        threshold=1, current_quantity=5)
     rows.append(h["row"])
 
@@ -100,9 +100,9 @@ async def test_scan() -> None:
         ss = gspread.service_account(filename=os.environ["GOOGLE_SHEETS_CREDENTIALS"]).open_by_key(
             os.environ["EXPENSES_SHEET_ID"]
         )
-        tab = ss.worksheet(exp.INVENTORY_TAB)
-        tab.update_cell(t["row"], exp.INV_COL_LAST_PURCHASE, future_buy)
-        due_items = {d["item"] for d in exp.items_needing_restock_reminder()}
+        tab = ss.worksheet(inv.INVENTORY_TAB)
+        tab.update_cell(t["row"], inv.INV_COL_LAST_PURCHASE, future_buy)
+        due_items = {d["item"] for d in inv.items_needing_restock_reminder()}
         assert "TEST_S_cement" in due_items, "re-buy after reminder should re-arm"
         print("ok: re-buy re-armed the cement reminder")
 
@@ -122,7 +122,7 @@ async def test_telegram() -> None:
 
     bot = Bot(token=os.environ["TELEGRAM_BOT_TOKEN"])
     today = date.today()
-    t = exp.track_item(item="TEST_S_发我（请忽略）", unit="袋", strategy="threshold",
+    t = inv.track_item(item="TEST_S_发我（请忽略）", unit="袋", strategy="threshold",
                        threshold=1, current_quantity=0)
 
     async def real_send(chat_id: int, text: str) -> None:

@@ -7,15 +7,13 @@ adds:
   into TELEGRAM_USER_CHAT_ID in .env (needed for scheduled push).
 - /digest command — triggers an immediate digest, mainly for testing the
   digest pipeline without waiting for the scheduled time.
-- Daily JobQueue task — every day at DIGEST_TIME, builds and pushes the
-  digest to TELEGRAM_USER_CHAT_ID in USER_LANGUAGE.
+- Scheduled digests — the daily morning/evening pushes live in
+  digest_scheduler.py, registered from main() alongside the other schedulers.
 """
 import asyncio
 import logging
 import os
-import re
-from datetime import datetime, time
-from zoneinfo import ZoneInfo
+from datetime import datetime
 
 from dotenv import load_dotenv
 from telegram import BotCommand, Update
@@ -29,18 +27,19 @@ from telegram.ext import (
 
 import contract_scheduler
 import cwi_scheduler
+import digest_scheduler
 import inventory_scheduler
 import investment_scheduler
 import scheduler
 from llm import get_backend
+from llm.tooldefs import build_tools
 from prompts import (
-    render_evening_digest_request,
     render_morning_digest_request,
     render_personal_assistant,
     render_todos_request,
 )
+from router import route_domains
 from storage.history import append_turn, read_history
-from storage.markdown import get_stale_items, mark_stale_alerted
 from tools.documents import DOCS_DIR, slugify
 
 load_dotenv()
@@ -53,27 +52,6 @@ logger = logging.getLogger(__name__)
 backend = get_backend()
 USER_NAME = os.getenv("USER_NAME", "the user")
 USER_LANGUAGE = os.getenv("USER_LANGUAGE", "Chinese")
-
-
-# Docker containers default to UTC. We read TZ from the environment so the
-# digest fires at the user's wall-clock time. PTB's JobQueue treats a naive
-# datetime.time as UTC by default; attaching tzinfo makes it use local time.
-LOCAL_TZ = ZoneInfo(os.getenv("TZ", "UTC"))
-
-
-def _parse_digest_time(value: str) -> time:
-    match = re.match(r"^(\d{1,2}):(\d{2})$", value)
-    if not match:
-        raise ValueError(f"Invalid DIGEST_TIME {value!r}, expected HH:MM (e.g. 08:30)")
-    return time(
-        hour=int(match.group(1)),
-        minute=int(match.group(2)),
-        tzinfo=LOCAL_TZ,
-    )
-
-
-DIGEST_TIME = _parse_digest_time(os.getenv("DIGEST_TIME", "08:30"))
-EVENING_DIGEST_TIME = _parse_digest_time(os.getenv("EVENING_DIGEST_TIME", "21:00"))
 
 _chat_id_env = os.getenv("TELEGRAM_USER_CHAT_ID", "").strip()
 USER_CHAT_ID: int | None = int(_chat_id_env) if _chat_id_env else None
@@ -96,11 +74,17 @@ async def _ask_llm(
     history: list[dict[str, str]] | None = None,
     images: list[bytes] | None = None,
     documents: list[bytes] | None = None,
+    domains: set[str] | None = None,
 ) -> str:
-    """Run a single LLM round-trip with the personal-assistant system prompt."""
-    system_prompt = render_personal_assistant(USER_NAME)
+    """Run a single LLM round-trip with the personal-assistant system prompt.
+
+    `domains` (from router.route_domains) selects which prompt sections + tools
+    ship, shrinking the per-call prefix. None = all domains — used by the canned
+    digest/todos commands and any direct caller, and byte-identical to before."""
+    system_prompt = render_personal_assistant(USER_NAME, domains)
+    tools = build_tools(domains)
     return await asyncio.to_thread(
-        backend.chat, user_message, system_prompt, history, images, documents
+        backend.chat, user_message, system_prompt, history, images, documents, tools
     )
 
 
@@ -123,8 +107,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     prefixed = f"[Now: {now_str}]\n{text}"
 
+    domains = route_domains(text)
     try:
-        reply = await _ask_llm(prefixed, history=history)
+        reply = await _ask_llm(prefixed, history=history, domains=domains)
     except Exception as exc:
         logger.exception("backend.chat failed")
         reply = f"[error] {exc}"
@@ -167,8 +152,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     user_message = f"[Now: {now_str}] [图片] {caption}" if caption else f"[Now: {now_str}] [图片]"
 
+    domains = route_domains(caption, has_image=True)
     try:
-        reply = await _ask_llm(user_message, history=history, images=[image_bytes])
+        reply = await _ask_llm(user_message, history=history, images=[image_bytes], domains=domains)
     except Exception as exc:
         logger.exception("photo backend.chat failed")
         reply = f"[error] {exc}"
@@ -226,8 +212,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         f"[Now: {now_str}] [文档 PDF: {fname}，原件已存为 {saved_name}] {caption}".strip()
     )
 
+    domains = route_domains(caption, has_document=True)
     try:
-        reply = await _ask_llm(user_message, history=history, documents=[pdf_bytes])
+        reply = await _ask_llm(user_message, history=history, documents=[pdf_bytes], domains=domains)
     except Exception as exc:
         logger.exception("document backend.chat failed")
         reply = f"[error] {exc}"
@@ -315,67 +302,6 @@ async def cmd_active(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text(f"active tab 切换到 {arg}")
 
 
-async def send_daily_digest(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Scheduled task: build the morning digest and push to USER_CHAT_ID.
-
-    Includes a "Stale" section for pending items with no due date that
-    haven't been surfaced in the last 7 days. Stale state is mark-on-send
-    success: if the LLM call or Telegram push fails, the items are NOT
-    marked, so they re-surface tomorrow.
-    """
-    if USER_CHAT_ID is None:
-        logger.warning("daily digest skipped: TELEGRAM_USER_CHAT_ID is not set")
-        return
-
-    now = datetime.now()
-    stale = get_stale_items(days=7, now=now)
-    stale_titles = [it.title for it in stale] or None
-
-    llm_ok = False
-    try:
-        reply = await _ask_llm(
-            render_morning_digest_request(USER_LANGUAGE, stale_titles=stale_titles)
-        )
-        llm_ok = True
-    except Exception as exc:
-        logger.exception("daily digest failed")
-        reply = f"[digest error] {exc}"
-
-    send_ok = False
-    try:
-        await context.bot.send_message(chat_id=USER_CHAT_ID, text=reply)
-        send_ok = True
-    except Exception:
-        logger.exception("daily digest send failed")
-
-    if llm_ok and send_ok and stale:
-        now_str = now.strftime("%Y-%m-%d %H:%M")
-        for it in stale:
-            try:
-                mark_stale_alerted(it.title, now_str)
-            except Exception:
-                logger.exception("mark_stale_alerted failed for %r", it.title)
-
-
-async def send_evening_digest(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Scheduled task: evening check-in. If nothing is pending today and
-    nothing is overdue, the LLM returns an empty string and the push is
-    suppressed (silence is the desired state when there's nothing to nag
-    about — see EVENING_DIGEST_TEMPLATE)."""
-    if USER_CHAT_ID is None:
-        logger.warning("evening digest skipped: TELEGRAM_USER_CHAT_ID is not set")
-        return
-    try:
-        reply = await _ask_llm(render_evening_digest_request(USER_LANGUAGE))
-    except Exception as exc:
-        logger.exception("evening digest failed")
-        reply = f"[evening digest error] {exc}"
-    if not reply.strip():
-        logger.info("evening digest suppressed: nothing pending today")
-        return
-    await context.bot.send_message(chat_id=USER_CHAT_ID, text=reply)
-
-
 async def _set_commands(application: Application) -> None:
     """Register the slash-command menu Telegram shows when the user types '/'.
     Runs once on startup via post_init; idempotent. Keep in sync with the
@@ -405,10 +331,7 @@ def main() -> None:
             "JobQueue is not available — install with `pip install \"python-telegram-bot[job-queue]\"`"
         )
     else:
-        app.job_queue.run_daily(send_daily_digest, time=DIGEST_TIME)
-        logger.info("daily digest scheduled at %s (system local time)", DIGEST_TIME)
-        app.job_queue.run_daily(send_evening_digest, time=EVENING_DIGEST_TIME)
-        logger.info("evening digest scheduled at %s (system local time)", EVENING_DIGEST_TIME)
+        digest_scheduler.register_jobs(app)
         scheduler.register_jobs(app)
         investment_scheduler.register_jobs(app)
         inventory_scheduler.register_jobs(app)

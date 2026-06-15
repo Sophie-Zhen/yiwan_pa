@@ -26,6 +26,7 @@ from dotenv import load_dotenv
 from llm import get_backend
 from prompts import render_personal_assistant
 from tools import expenses as exp
+from tools import inventory as inv
 
 load_dotenv()
 
@@ -35,7 +36,7 @@ def _now(msg: str) -> str:
 
 
 def _get(item: str) -> dict | None:
-    return next((r for r in exp.list_inventory(status_filter=None) if r["item"] == item), None)
+    return next((r for r in inv.list_inventory(status_filter=None) if r["item"] == item), None)
 
 
 def main() -> None:
@@ -97,7 +98,7 @@ def main() -> None:
             os.environ["EXPENSES_SHEET_ID"]
         )
         print(f"\ncleaning up inventory rows {created_inv}, ledger rows {new_ledger}")
-        inv_tab = ss.worksheet(exp.INVENTORY_TAB)
+        inv_tab = ss.worksheet(inv.INVENTORY_TAB)
         for r in sorted(set(created_inv), reverse=True):
             inv_tab.delete_rows(r)
         led_tab = ss.worksheet(exp.LEDGER_TAB)

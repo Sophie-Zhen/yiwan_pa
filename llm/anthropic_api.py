@@ -74,7 +74,12 @@ class AnthropicBackend(LLMBackend):
         history: list[dict[str, str]] | None = None,
         images: list[bytes] | None = None,
         documents: list[bytes] | None = None,
+        tools: list[Any] | None = None,
     ) -> str:
+        # Per-message routed tool set (router/build_tools picks the active
+        # domains' tools). None = the full TOOLS list. Frozen for the whole
+        # loop below, so the cached prefix stays stable within a message.
+        tools_to_use = tools if tools is not None else TOOLS
         # Conversation history (if any) goes at the front of the messages
         # list so the model sees prior turns as context for the new one.
         # The agent loop appends its own assistant + tool_result blocks on
@@ -127,7 +132,7 @@ class AnthropicBackend(LLMBackend):
             kwargs: dict[str, Any] = {
                 "model": model,
                 "max_tokens": MAX_TOKENS,
-                "tools": TOOLS,
+                "tools": tools_to_use,
                 "messages": messages,
                 "thinking": {"type": "adaptive"},
                 "cache_control": {"type": "ephemeral"},

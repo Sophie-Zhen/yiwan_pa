@@ -72,7 +72,7 @@ def _parse_header(text: str) -> tuple[str, dict[str, str], str]:
             title = stripped[2:].strip()
             continue
         m = _HEADER_LINE.match(stripped)
-        if m and title and not fields.get("_body_started"):
+        if m and title:
             fields[m.group(1)] = m.group(2).strip()
             continue
         if stripped == "" and title and i <= len(fields) + 1:

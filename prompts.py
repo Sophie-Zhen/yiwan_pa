@@ -393,11 +393,71 @@ If BOTH groups are empty, respond with EXACTLY an empty string — no message, n
 Reply in {language} with a low-key check-in tone, not a nag. No preamble, no closing remarks."""
 
 
-def render_personal_assistant(user_name: str) -> str:
+# --- System-prompt modularization ------------------------------------------
+# The monolithic PERSONAL_ASSISTANT_TEMPLATE is sliced at section boundaries
+# into ordered (kind, text) blocks. render_personal_assistant emits the CORE
+# blocks always + only the active domains' blocks, in document order, so a
+# routed message ships a much smaller prefix. With domains=None (all domains)
+# the concatenation reproduces the template BYTE-FOR-BYTE (blocks are slices,
+# never rewritten) — the zero-regression path the dark-ship relies on.
+#
+# Markers are unique section headers; the head block (before the first marker)
+# is core. Keep these in sync with the template headers and router.py's trigger
+# words; scripts/test_prompt_blocks.py asserts byte-identity + cross-registry
+# agreement so drift fails a test instead of shipping a broken prompt.
+_BLOCK_CUTS = [
+    # "## Projects" is CORE, not a deferrable domain: build_tools always ships
+    # the project tools (append_to_inbox type=project, set_status), so their
+    # governing rules (mode=, never-auto-cascade) must always be present too —
+    # otherwise a routed message has the tools but not the guidance.
+    ("## Projects", "core"),
+    ("## State checks", "core"),
+    ("## Transhipment parcels", "parcels"),
+    ("## Fund 定投", "investments"),
+    ("## 家庭花销", "expenses"),
+    ("## 合同续约", "contracts"),
+    ("## 文档存档与问答", "documents"),
+    ("## Web search", "web_search"),
+    ("## CWI 教学日志", "cwi"),
+    ("\n- Storage targets:", "core"),  # global trailer
+]
+
+
+def _split_blocks(template: str) -> list[tuple[str, str]]:
+    blocks: list[tuple[str, str]] = []
+    rest = template
+    kind = "core"  # the head, before the first marker
+    for marker, next_kind in _BLOCK_CUTS:
+        idx = rest.find(marker)
+        if idx == -1:
+            raise ValueError(
+                f"section marker {marker!r} not found in PERSONAL_ASSISTANT_TEMPLATE — "
+                "the template and _BLOCK_CUTS have drifted (see scripts/test_prompt_blocks.py)."
+            )
+        blocks.append((kind, rest[:idx]))
+        rest = rest[idx:]
+        kind = next_kind
+    blocks.append((kind, rest))
+    return blocks
+
+
+_BLOCKS = _split_blocks(PERSONAL_ASSISTANT_TEMPLATE)
+
+# All routable domain labels: every non-core block kind, plus "todos" (its
+# guidance now lives in core, but the router still emits "todos" to keep todo
+# messages narrow, and build_tools always ships todos tools). Derived from
+# _BLOCKS so a newly added section can't silently drift out of the default
+# full prompt (the domains=None / fallback path).
+ALL_DOMAINS = frozenset(kind for kind, _ in _BLOCKS if kind != "core") | {"todos"}
+
+
+def render_personal_assistant(user_name: str, domains: Optional[set[str]] = None) -> str:
     # Date-only (no time): keeps the system prompt byte-stable for the whole
     # day so the prompt cache (in AnthropicBackend) actually hits across calls.
     today = datetime.now().strftime("%Y-%m-%d")
-    return PERSONAL_ASSISTANT_TEMPLATE.format(user_name=user_name, today=today)
+    active = ALL_DOMAINS if domains is None else set(domains)
+    body = "".join(text for kind, text in _BLOCKS if kind == "core" or kind in active)
+    return body.format(user_name=user_name, today=today)
 
 
 def render_morning_digest_request(

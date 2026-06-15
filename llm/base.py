@@ -16,6 +16,7 @@ class LLMBackend(ABC):
         history: list[dict[str, str]] | None = None,
         images: list[bytes] | None = None,
         documents: list[bytes] | None = None,
+        tools: list | None = None,
     ) -> str:
         """Send a single user message and return the assistant's reply.
 
@@ -37,6 +38,10 @@ class LLMBackend(ABC):
                 message (e.g. an insurance policy to extract). Backends without
                 document support log a warning and ignore. Like images, not
                 persisted in history.
+            tools: optional per-message tool schema list (the router/build_tools
+                pick only the active domains' tools to shrink the prefix). None
+                means the backend uses its full default tool set. Backends that
+                manage their own tools (e.g. the shell-out CLI) ignore it.
 
         See docs/decisions/0001-conversation-history.md for the storage
         layer that produces `history`.

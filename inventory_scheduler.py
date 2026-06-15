@@ -14,23 +14,18 @@ Batched (one message, not one per item) because the natural use is a single
 "what to buy" list, unlike the per-debit 定投 reminders.
 """
 import logging
-import os
 from datetime import datetime
-from typing import Awaitable, Callable, Optional
+from typing import Optional
 
 from telegram.ext import Application, ContextTypes
 
-from tools import expenses as exp
+import scheduler_base
+from tools import inventory
 
 logger = logging.getLogger(__name__)
 
-REMINDER_HOUR = int(os.getenv("INVENTORY_REMINDER_HOUR", "10"))
-SCAN_INTERVAL_SECONDS = 3600
-
-_chat_id_env = os.getenv("TELEGRAM_USER_CHAT_ID", "").strip()
-USER_CHAT_ID: Optional[int] = int(_chat_id_env) if _chat_id_env else None
-
-SendFn = Callable[[int, str], Awaitable[None]]
+REMINDER_HOUR = scheduler_base.reminder_hour("INVENTORY_REMINDER_HOUR", 10)
+USER_CHAT_ID: Optional[int] = scheduler_base.load_chat_id()
 
 
 def _qty_str(q) -> str:
@@ -49,7 +44,7 @@ def _format_line(it: dict) -> str:
     last purchase (the thing that tripped the cadence).
     """
     remaining = f"{_qty_str(it.get('quantity', ''))} {it.get('unit', '') or ''}".strip()
-    if it.get("strategy") == exp.STRATEGY_THRESHOLD:
+    if it.get("strategy") == inventory.STRATEGY_THRESHOLD:
         return f"• {it['item']}：还剩 {remaining}（阈值 {_qty_str(it.get('threshold', ''))}）"
     days = it.get("days_since_purchase")
     days_txt = f"，已 {days} 天没买" if days is not None else ""
@@ -58,7 +53,7 @@ def _format_line(it: dict) -> str:
 
 async def _scan_once(
     now: datetime,
-    send_fn: SendFn,
+    send_fn: scheduler_base.SendFn,
     force_hour: bool = False,
 ) -> list[str]:
     """Core scan. Returns the list of item names reminded.
@@ -68,15 +63,13 @@ async def _scan_once(
         send_fn: async callable taking (chat_id, text).
         force_hour: if True, skip the REMINDER_HOUR check (manual triggers/tests).
     """
-    if USER_CHAT_ID is None:
-        return []
-    if not force_hour and now.hour != REMINDER_HOUR:
+    if not scheduler_base.should_scan(USER_CHAT_ID, now, REMINDER_HOUR, force_hour):
         return []
 
     today_str = now.date().strftime("%Y-%m-%d")
 
     try:
-        due = exp.items_needing_restock_reminder()
+        due = inventory.items_needing_restock_reminder()
     except Exception:
         logger.exception("inventory scheduler: items_needing_restock_reminder failed")
         return []
@@ -93,7 +86,7 @@ async def _scan_once(
     reminded: list[str] = []
     for it in due:
         try:
-            exp.mark_inventory_reminded(it["row"], today_str)
+            inventory.mark_inventory_reminded(it["row"], today_str)
         except Exception:
             # Send succeeded, mark failed — next tick re-fires. One duplicate
             # reminder beats losing the alert.
@@ -113,18 +106,9 @@ async def scan_restock_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def register_jobs(app: Application) -> None:
-    if app.job_queue is None:
-        logger.warning(
-            "inventory scheduler: JobQueue unavailable, scan_restock_reminders not scheduled"
-        )
-        return
     # first=360: stagger from the parcels (10) and investment (300) schedulers.
-    app.job_queue.run_repeating(
-        scan_restock_reminders,
-        interval=SCAN_INTERVAL_SECONDS,
-        first=360,
-    )
-    logger.info(
-        "inventory scheduler: scan every %ds, fires at hour=%d",
-        SCAN_INTERVAL_SECONDS, REMINDER_HOUR,
+    scheduler_base.register_hourly(
+        app, scan_restock_reminders,
+        first=360, log_label="inventory scheduler",
+        reminder_hour=REMINDER_HOUR, logger=logger,
     )

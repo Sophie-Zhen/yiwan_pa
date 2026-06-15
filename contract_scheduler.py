@@ -11,13 +11,13 @@ when renew_contract rolls remind_on forward (and clears last_reminded). Same
 shape as investment_scheduler / inventory_scheduler.
 """
 import logging
-import os
 from datetime import datetime
-from typing import Awaitable, Callable, Optional
+from typing import Optional
 
 from dotenv import load_dotenv
 from telegram.ext import Application, ContextTypes
 
+import scheduler_base
 from tools import contracts as ct
 
 # Load .env explicitly: USER_CHAT_ID is read at import, and this module is
@@ -27,13 +27,8 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-REMINDER_HOUR = int(os.getenv("CONTRACT_REMINDER_HOUR", "9"))
-SCAN_INTERVAL_SECONDS = 3600
-
-_chat_id_env = os.getenv("TELEGRAM_USER_CHAT_ID", "").strip()
-USER_CHAT_ID: Optional[int] = int(_chat_id_env) if _chat_id_env else None
-
-SendFn = Callable[[int, str], Awaitable[None]]
+REMINDER_HOUR = scheduler_base.reminder_hour("CONTRACT_REMINDER_HOUR", 9)
+USER_CHAT_ID: Optional[int] = scheduler_base.load_chat_id()
 
 _TYPE_CN = {
     "energy": "能源",
@@ -68,13 +63,11 @@ def _format_line(c: dict) -> str:
 
 async def _scan_once(
     now: datetime,
-    send_fn: SendFn,
+    send_fn: scheduler_base.SendFn,
     force_hour: bool = False,
 ) -> list[str]:
     """Core scan. Returns the names of contracts reminded."""
-    if USER_CHAT_ID is None:
-        return []
-    if not force_hour and now.hour != REMINDER_HOUR:
+    if not scheduler_base.should_scan(USER_CHAT_ID, now, REMINDER_HOUR, force_hour):
         return []
 
     today = now.date()
@@ -116,18 +109,9 @@ async def scan_contract_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def register_jobs(app: Application) -> None:
-    if app.job_queue is None:
-        logger.warning(
-            "contract scheduler: JobQueue unavailable, scan_contract_reminders not scheduled"
-        )
-        return
     # first=420: stagger from parcels (10), investment (300), inventory (360).
-    app.job_queue.run_repeating(
-        scan_contract_reminders,
-        interval=SCAN_INTERVAL_SECONDS,
-        first=420,
-    )
-    logger.info(
-        "contract scheduler: scan every %ds, fires at hour=%d",
-        SCAN_INTERVAL_SECONDS, REMINDER_HOUR,
+    scheduler_base.register_hourly(
+        app, scan_contract_reminders,
+        first=420, log_label="contract scheduler",
+        reminder_hour=REMINDER_HOUR, logger=logger,
     )

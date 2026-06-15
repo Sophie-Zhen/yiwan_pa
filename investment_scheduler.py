@@ -19,12 +19,12 @@ typically rolls 31 → 30 for short months).
 """
 import calendar
 import logging
-import os
 from datetime import date, datetime, timedelta
-from typing import Awaitable, Callable, Optional
+from typing import Optional
 
 from telegram.ext import Application, ContextTypes
 
+import scheduler_base
 from tools import investments as inv
 from tools.investments import (
     FREQUENCY_IRREGULAR,
@@ -34,11 +34,8 @@ from tools.investments import (
 
 logger = logging.getLogger(__name__)
 
-REMINDER_HOUR = int(os.getenv("INVESTMENT_REMINDER_HOUR", "9"))
-SCAN_INTERVAL_SECONDS = 3600
-
-_chat_id_env = os.getenv("TELEGRAM_USER_CHAT_ID", "").strip()
-USER_CHAT_ID: Optional[int] = int(_chat_id_env) if _chat_id_env else None
+REMINDER_HOUR = scheduler_base.reminder_hour("INVESTMENT_REMINDER_HOUR", 9)
+USER_CHAT_ID: Optional[int] = scheduler_base.load_chat_id()
 
 
 def _should_remind(plan: dict, today: date) -> bool:
@@ -79,12 +76,9 @@ def _format_reminder(plan: dict, today: date) -> str:
     )
 
 
-SendFn = Callable[[int, str], Awaitable[None]]
-
-
 async def _scan_once(
     now: datetime,
-    send_fn: SendFn,
+    send_fn: scheduler_base.SendFn,
     force_hour: bool = False,
 ) -> list[str]:
     """Core scan logic. Returns list of fund names that were reminded.
@@ -94,9 +88,7 @@ async def _scan_once(
         send_fn: async callable taking (chat_id, text).
         force_hour: if True, skip the REMINDER_HOUR check (manual triggers).
     """
-    if USER_CHAT_ID is None:
-        return []
-    if not force_hour and now.hour != REMINDER_HOUR:
+    if not scheduler_base.should_scan(USER_CHAT_ID, now, REMINDER_HOUR, force_hour):
         return []
 
     today = now.date()
@@ -152,20 +144,11 @@ async def scan_investment_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def register_jobs(app: Application) -> None:
-    if app.job_queue is None:
-        logger.warning(
-            "investment scheduler: JobQueue unavailable, scan_investment_reminders not scheduled"
-        )
-        return
     # first=300: stagger from the parcels scheduler's first=10 and the digest
     # daily jobs. No race risk — they're separate handlers — but uneven first
     # offsets keep the startup log readable.
-    app.job_queue.run_repeating(
-        scan_investment_reminders,
-        interval=SCAN_INTERVAL_SECONDS,
-        first=300,
-    )
-    logger.info(
-        "investment scheduler: scan every %ds, fires at hour=%d",
-        SCAN_INTERVAL_SECONDS, REMINDER_HOUR,
+    scheduler_base.register_hourly(
+        app, scan_investment_reminders,
+        first=300, log_label="investment scheduler",
+        reminder_hour=REMINDER_HOUR, logger=logger,
     )

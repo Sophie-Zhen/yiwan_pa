@@ -22,10 +22,10 @@ lines. Entries are append-mostly; status flips pending → recorded once she's
 entered the session into the DLOG.
 """
 import pathlib
-import re
 from dataclasses import dataclass
-from datetime import date
 from typing import Optional
+
+from storage import md_entities
 
 DATA_DIR = pathlib.Path(__file__).resolve().parent.parent / "data"
 CWI_LOG_PATH = DATA_DIR / "cwi_log.md"
@@ -48,8 +48,6 @@ CWI_LOG_HEADER = (
 
 VALID_KINDS = {"instructed", "personal"}
 VALID_STATUSES = {"pending", "recorded"}
-
-_FIELD_LINE = re.compile(r"^- (\w+):\s*(.*)$")
 
 
 @dataclass
@@ -87,9 +85,7 @@ class Entry:
 
 
 def _ensure_file() -> None:
-    if not CWI_LOG_PATH.exists():
-        CWI_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        CWI_LOG_PATH.write_text(CWI_LOG_HEADER + "\n", encoding="utf-8")
+    md_entities.ensure_file(CWI_LOG_PATH, CWI_LOG_HEADER)
 
 
 def _to_int(value: str, default: int = 0) -> int:
@@ -101,16 +97,7 @@ def _to_int(value: str, default: int = 0) -> int:
 
 def _parse(content: str) -> list[Entry]:
     entries: list[Entry] = []
-    sections = re.split(r"^## ", content, flags=re.MULTILINE)[1:]
-    for sec in sections:
-        lines = sec.strip().split("\n")
-        if not lines:
-            continue
-        fields: dict[str, str] = {}
-        for line in lines[1:]:
-            m = _FIELD_LINE.match(line.strip())
-            if m:
-                fields[m.group(1)] = m.group(2).strip()
+    for _heading, fields in md_entities.parse_sections(content):
         if "id" not in fields:
             continue
         entries.append(
@@ -137,16 +124,7 @@ def _read() -> list[Entry]:
 
 
 def _write(entries: list[Entry]) -> None:
-    body = "\n\n".join(e.to_markdown() for e in entries)
-    sep = "\n\n" if body else ""
-    CWI_LOG_PATH.write_text(CWI_LOG_HEADER + sep + body + "\n", encoding="utf-8")
-
-
-def _validate_date(label: str, value: str) -> None:
-    try:
-        date.fromisoformat(value)
-    except ValueError as exc:
-        raise ValueError(f"{label} must be YYYY-MM-DD, got {value!r}") from exc
+    md_entities.write_entities(CWI_LOG_PATH, CWI_LOG_HEADER, entries)
 
 
 def _next_id(entries: list[Entry]) -> int:
@@ -185,7 +163,7 @@ def log_instructed_session(
     reflective defaults True because each session's DLOG entry IS a reflective
     comment.
     """
-    _validate_date("date", date)
+    md_entities.validate_date("date", date)
     entries = _read()
     entry = Entry(
         id=_next_id(entries),
@@ -217,7 +195,7 @@ def log_personal_climb(
     training) — counts toward the 30-visits / 3-walls / 40-leads personal
     experience requirement. status starts 'pending'.
     """
-    _validate_date("date", date)
+    md_entities.validate_date("date", date)
     entries = _read()
     entry = Entry(
         id=_next_id(entries),

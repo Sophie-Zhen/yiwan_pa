@@ -43,11 +43,12 @@ Sheet layout (column number is 1-based):
     18 R  备注             | input
 """
 
-import os
 from pathlib import Path
 
 import gspread
 from dotenv import load_dotenv
+
+from storage import sheets
 
 load_dotenv()
 
@@ -79,11 +80,6 @@ SUMMARY_MARKER = "summary"
 VALID_STATUSES = {"未发货", "在途", "已签收", "已入库拍照"}
 
 
-def _spreadsheet() -> gspread.Spreadsheet:
-    client = gspread.service_account(filename=os.environ["GOOGLE_SHEETS_CREDENTIALS"])
-    return client.open_by_key(os.environ["GOOGLE_SHEET_ID"])
-
-
 def get_active_tab() -> str | None:
     if not ACTIVE_TAB_FILE.exists():
         return None
@@ -93,7 +89,7 @@ def get_active_tab() -> str | None:
 
 def set_active_tab(name: str) -> str:
     """Validate the tab exists, then persist it. Raises WorksheetNotFound on typo."""
-    _spreadsheet().worksheet(name)
+    sheets.open_sheet("GOOGLE_SHEET_ID").worksheet(name)
     ACTIVE_TAB_FILE.parent.mkdir(parents=True, exist_ok=True)
     ACTIVE_TAB_FILE.write_text(name)
     return name
@@ -105,7 +101,7 @@ def _active_worksheet() -> gspread.Worksheet:
         raise RuntimeError(
             "No active tab set. Use the /active command to set one first."
         )
-    return _spreadsheet().worksheet(name)
+    return sheets.open_sheet("GOOGLE_SHEET_ID").worksheet(name)
 
 
 def _channel_from_tab_name(tab_name: str) -> str:
@@ -125,8 +121,8 @@ def _scan_rows(tab: gspread.Worksheet) -> tuple[list[int], int | None]:
     data_rows: list[int] = []
     summary_row: int | None = None
     for i, row in enumerate(all_values[1:], start=2):
-        item = row[COL_ITEM - 1] if len(row) >= COL_ITEM else ""
-        qty = row[COL_QUANTITY - 1] if len(row) >= COL_QUANTITY else ""
+        item = sheets.cell(row, COL_ITEM)
+        qty = sheets.cell(row, COL_QUANTITY)
         if item == SUMMARY_MARKER:
             summary_row = i
             continue
@@ -142,8 +138,8 @@ def _find_first_empty_data_row(tab: gspread.Worksheet) -> int:
     """
     all_values = tab.get_all_values()
     for i, row in enumerate(all_values[1:], start=2):
-        item = row[COL_ITEM - 1] if len(row) >= COL_ITEM else ""
-        qty = row[COL_QUANTITY - 1] if len(row) >= COL_QUANTITY else ""
+        item = sheets.cell(row, COL_ITEM)
+        qty = sheets.cell(row, COL_QUANTITY)
         if item == SUMMARY_MARKER:
             continue
         if not qty:
@@ -205,11 +201,7 @@ def record_parcel(
     if notes is not None:
         row[COL_NOTES - 1] = notes
 
-    tab.update(
-        range_name=f"A{target_row}:{LAST_COL_LETTER}{target_row}",
-        values=[row],
-        value_input_option="USER_ENTERED",
-    )
+    sheets.write_row(tab, target_row, row, LAST_COL_LETTER)
     return {"row": target_row, "item": item, "tab": tab.title}
 
 
@@ -226,12 +218,12 @@ def find_parcel(query: str) -> list[dict]:
     query_lower = query.lower()
     matches: list[dict] = []
     for row_idx, row in enumerate(all_values[1:], start=2):
-        item = row[COL_ITEM - 1] if len(row) >= COL_ITEM else ""
+        item = sheets.cell(row, COL_ITEM)
         if item == SUMMARY_MARKER:
             continue
-        tracking = row[COL_TRACKING - 1] if len(row) >= COL_TRACKING else ""
-        status = row[COL_STATUS - 1] if len(row) >= COL_STATUS else ""
-        qty = row[COL_QUANTITY - 1] if len(row) >= COL_QUANTITY else ""
+        tracking = sheets.cell(row, COL_TRACKING)
+        status = sheets.cell(row, COL_STATUS)
+        qty = sheets.cell(row, COL_QUANTITY)
         if not qty:
             continue
         if query_lower in item.lower() or (query and query in tracking):
@@ -305,19 +297,15 @@ def parcel_summary() -> dict:
     status_counts: dict[str, int] = {s: 0 for s in VALID_STATUSES}
 
     for row in all_values[1:]:
-        item = row[COL_ITEM - 1] if len(row) >= COL_ITEM else ""
+        item = sheets.cell(row, COL_ITEM)
         if item == SUMMARY_MARKER:
             continue
-        qty = row[COL_QUANTITY - 1] if len(row) >= COL_QUANTITY else ""
+        qty = sheets.cell(row, COL_QUANTITY)
         if not qty:
             continue
         row_count += 1
 
-        weight_str = (
-            row[COL_DOMESTIC_WEIGHT - 1]
-            if len(row) >= COL_DOMESTIC_WEIGHT
-            else ""
-        )
+        weight_str = sheets.cell(row, COL_DOMESTIC_WEIGHT)
         if weight_str:
             try:
                 total_weight += float(weight_str)
@@ -325,11 +313,11 @@ def parcel_summary() -> dict:
             except ValueError:
                 pass
 
-        tracking = row[COL_TRACKING - 1] if len(row) >= COL_TRACKING else ""
+        tracking = sheets.cell(row, COL_TRACKING)
         if tracking:
             tracking_nos.add(str(tracking))
 
-        status = row[COL_STATUS - 1] if len(row) >= COL_STATUS else ""
+        status = sheets.cell(row, COL_STATUS)
         if status in status_counts:
             status_counts[status] += 1
 
@@ -375,7 +363,7 @@ def update_parcels_by_tracking(
     all_values = tab.get_all_values()
     matched_rows: list[int] = []
     for i, row in enumerate(all_values[1:], start=2):
-        item = row[COL_ITEM - 1] if len(row) >= COL_ITEM else ""
+        item = sheets.cell(row, COL_ITEM)
         if item == SUMMARY_MARKER:
             continue
         tr = str(row[COL_TRACKING - 1]) if len(row) >= COL_TRACKING else ""
@@ -439,11 +427,7 @@ def settle_shipping(
     summary[COL_PAID_SHIPPING - 1] = total_shipping_rmb
     summary[COL_GRAND_TOTAL_RMB - 1] = f"=F{s}+M{s}"
 
-    tab.update(
-        range_name=f"A{s}:{LAST_COL_LETTER}{s}",
-        values=[summary],
-        value_input_option="USER_ENTERED",
-    )
+    sheets.write_row(tab, s, summary, LAST_COL_LETTER)
 
     cells = []
     for r in data_rows:

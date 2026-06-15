@@ -22,6 +22,29 @@ WEB_SEARCH_TOOL = {"type": "web_search_20260209", "name": "web_search", "max_use
 
 TOOLS = [schema for domain in _DOMAINS for schema in domain.SCHEMAS] + [WEB_SEARCH_TOOL]
 
+# Fixed domain order so a given domain set always yields a byte-identical tool
+# list (prompt-cache stability). Matches _DOMAINS top-to-bottom.
+CANONICAL_ORDER = [d.__name__.split(".")[-1] for d in _DOMAINS]
+
+# domain label -> that module's tool schemas, for per-message tool routing.
+TOOLS_BY_DOMAIN = {name: d.SCHEMAS for name, d in zip(CANONICAL_ORDER, _DOMAINS)}
+
+
+def build_tools(domains=None):
+    """Assemble the tool list for a routed message: the active domains' tools in
+    canonical order + web_search (always last). `todos` tools are always included
+    (the default behavior on any message). domains=None means all domains, which
+    returns a list byte-identical to the module-level TOOLS.
+
+    An under-routed domain only means its schema isn't offered to the model; it
+    can never crash dispatch, because execute_tool resolves against the full
+    _HANDLERS map regardless of which schemas were sent."""
+    active = set(CANONICAL_ORDER) if domains is None else set(domains)
+    active.add("todos")  # always-on core
+    tools = [s for name in CANONICAL_ORDER if name in active for s in TOOLS_BY_DOMAIN[name]]
+    tools.append(WEB_SEARCH_TOOL)
+    return tools
+
 _HANDLERS = {}
 for _domain in _DOMAINS:
     _overlap = _HANDLERS.keys() & _domain.HANDLERS.keys()
