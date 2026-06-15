@@ -32,11 +32,13 @@ import inventory_scheduler
 import investment_scheduler
 import scheduler
 from llm import get_backend
+from llm.tooldefs import build_tools
 from prompts import (
     render_morning_digest_request,
     render_personal_assistant,
     render_todos_request,
 )
+from router import route_domains
 from storage.history import append_turn, read_history
 from tools.documents import DOCS_DIR, slugify
 
@@ -72,11 +74,17 @@ async def _ask_llm(
     history: list[dict[str, str]] | None = None,
     images: list[bytes] | None = None,
     documents: list[bytes] | None = None,
+    domains: set[str] | None = None,
 ) -> str:
-    """Run a single LLM round-trip with the personal-assistant system prompt."""
-    system_prompt = render_personal_assistant(USER_NAME)
+    """Run a single LLM round-trip with the personal-assistant system prompt.
+
+    `domains` (from router.route_domains) selects which prompt sections + tools
+    ship, shrinking the per-call prefix. None = all domains — used by the canned
+    digest/todos commands and any direct caller, and byte-identical to before."""
+    system_prompt = render_personal_assistant(USER_NAME, domains)
+    tools = build_tools(domains)
     return await asyncio.to_thread(
-        backend.chat, user_message, system_prompt, history, images, documents
+        backend.chat, user_message, system_prompt, history, images, documents, tools
     )
 
 
@@ -99,8 +107,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     prefixed = f"[Now: {now_str}]\n{text}"
 
+    domains = route_domains(text)
     try:
-        reply = await _ask_llm(prefixed, history=history)
+        reply = await _ask_llm(prefixed, history=history, domains=domains)
     except Exception as exc:
         logger.exception("backend.chat failed")
         reply = f"[error] {exc}"
@@ -143,8 +152,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     user_message = f"[Now: {now_str}] [图片] {caption}" if caption else f"[Now: {now_str}] [图片]"
 
+    domains = route_domains(caption, has_image=True)
     try:
-        reply = await _ask_llm(user_message, history=history, images=[image_bytes])
+        reply = await _ask_llm(user_message, history=history, images=[image_bytes], domains=domains)
     except Exception as exc:
         logger.exception("photo backend.chat failed")
         reply = f"[error] {exc}"
@@ -202,8 +212,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         f"[Now: {now_str}] [文档 PDF: {fname}，原件已存为 {saved_name}] {caption}".strip()
     )
 
+    domains = route_domains(caption, has_document=True)
     try:
-        reply = await _ask_llm(user_message, history=history, documents=[pdf_bytes])
+        reply = await _ask_llm(user_message, history=history, documents=[pdf_bytes], domains=domains)
     except Exception as exc:
         logger.exception("document backend.chat failed")
         reply = f"[error] {exc}"
