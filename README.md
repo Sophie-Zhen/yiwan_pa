@@ -84,13 +84,17 @@ That's the thesis underneath this project: **the best personal assistant isn't t
 
 **Key parts:**
 
-- **`bot.py`** — `python-telegram-bot` long-poll loop, command + message handlers, daily JobQueue tasks for the morning + evening digests, conversation-history glue. Whitelists `TELEGRAM_USER_CHAT_ID` so the bot only responds to its owner.
+- **`bot.py`** — `python-telegram-bot` long-poll loop, command + message handlers, conversation-history glue, and registration of the scheduler jobs. Whitelists `TELEGRAM_USER_CHAT_ID` so the bot only responds to its owner.
 - **`scheduler.py`** — per-minute scan loop for per-item T-N push alerts. Reads `data/inbox.md` each tick, partitions un-fired declared offsets into normal vs. late, sends + records to the item's `alerted` field on the next pass.
+- **`*_scheduler.py` + `scheduler_base.py`** — the timed reminder jobs (contract / cwi / inventory / investment) plus `digest_scheduler.py` for the morning + evening digests, each exposing `register_jobs(app)`. `scheduler_base.py` holds the hourly-scan plumbing they share (env, the reminder-hour gate, JobQueue registration).
 - **`llm/`** — `LLMBackend` interface plus two implementations (selected by `LLM_BACKEND` env var). The abstraction is real: each backend handles auth, agent looping, and tool execution differently, but the bot doesn't know.
 - **`llm/anthropic_api.py`** — a self-written agent loop on top of the `anthropic` SDK. 40+ tools spanning todos, transhipment parcels, investments, household spending + inventory, contracts, documents, and the CWI logbook — plus the Anthropic `web_search` server tool; top-level prompt caching, adaptive thinking, typed exception handling.
 - **`storage/markdown.py`** — typed parser/writer for `data/inbox.md` and `data/archive.md`. Each item is a level-2 markdown heading with `key: value` fields; format spec in `data/README.md`.
+- **`storage/md_entities.py`** — shared parse/write skeleton for the other `## heading` + `- key: value` markdown stores (contracts, CWI logbook), so each domain keeps only its own dataclass and field mapping.
+- **`storage/sheets.py`** — shared Google Sheets helpers (auth, safe cell read, the first-empty-row workaround, tolerant numeric parse, row writer) used by the parcels / investments / household-spending tools.
 - **`storage/history.py`** — per-chat conversation history as JSONL with a sliding window (6 turns OR 30 minutes, whichever is shorter).
-- **`prompts.py`** — system prompt for the assistant role, plus canned digest requests (morning + evening) for scheduled pushes.
+- **`prompts.py`** — system prompt for the assistant role, plus canned digest requests (morning + evening) for scheduled pushes. The assistant prompt is sliced into a core block + per-domain blocks so routing can ship only the sections a message needs.
+- **`router.py`** — per-message domain routing: picks which domain(s) a message touches (by keyword / input type) and ships only those prompt blocks + tools, shrinking the per-call prefix from ~18k to ~4-7.5k tokens. Behind `ROUTING_ENABLED`, off by default (byte-identical when off).
 
 ## Notable engineering decisions
 
@@ -165,12 +169,17 @@ All config is environment variables in `.env`. See `.env.example` for the full l
 yiwan_pa/
 ├── bot.py                       # entry point
 ├── scheduler.py                 # per-minute T-N alert scan loop
+├── scheduler_base.py            # shared hourly-scan plumbing for reminders
+├── *_scheduler.py               # per-domain reminders + digest_scheduler.py
+├── router.py                    # per-message domain routing (behind ROUTING_ENABLED)
 ├── llm/                         # LLM backend abstraction
 │   ├── base.py                  # LLMBackend interface
 │   ├── claude_code.py           # subprocess to `claude` CLI
 │   └── anthropic_api.py         # anthropic SDK + agent loop
-├── storage/                     # plaintext storage layer
+├── storage/                     # plaintext + Google Sheets storage layer
 │   ├── markdown.py              # inbox / archive parser
+│   ├── md_entities.py           # shared markdown entity-store skeleton
+│   ├── sheets.py                # shared Google Sheets helpers
 │   └── history.py               # conversation history (JSONL)
 ├── prompts.py                   # system prompt + canned messages
 ├── data/                        # runtime state (gitignored except README)

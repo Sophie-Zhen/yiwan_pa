@@ -34,6 +34,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - **Self-contradiction bug** (FIELDNOTES 4/30): bot confirmed an item archived, then five minutes later denied it existed because it re-read inbox during a later capture and read "not in inbox" as "never existed". Closed by `find_item` + a "State checks" section in the system prompt that says: prior confirmations are evidence the item exists; `find_item` before retracting.
 - **Silent notes overwrite** (FIELDNOTES 4/30): "再加一项 X" caused `update_inbox_item(field=notes, ...)` to clobber prior notes. Closed by `append_to_notes` (read-then-write, joins with `; `).
 - **Archive trust** (FIELDNOTES 4/29): bot claimed an item was archived when in fact it wasn't. Same root-cause family as the self-contradiction bug; `find_item` + State checks close it.
+- **`investment_summary` crash on a non-numeric cell** — a stray or hand-typed value in 实际扣款金额 / 确认份额 used to raise and abort the whole summary; it now coerces to `0.0` like the other money parses (via `storage/sheets.py:to_float`).
+
+### For contributors
+
+- **Shared infrastructure extracted** — the Google Sheets boilerplate (auth, first-empty-row workaround, tolerant numeric parse, cell read, row writer) now lives in `storage/sheets.py`; the `## heading` + `- key: value` markdown stores share `storage/md_entities.py`; the four domain reminder schedulers share `scheduler_base.py`. Internal restructuring, no behavior change.
+- **Module cohesion** — the 库存 inventory watchlist split out of `tools/expenses.py` into `tools/inventory.py`; the morning/evening digest jobs split out of `bot.py` into `digest_scheduler.py`. Pure moves, behavior preserved.
+- **Per-message domain routing** (`router.py`) — ships only the active domain's prompt sections + tools per message, cutting the per-call prefix from ~18k to ~4-7.5k tokens (the dominant API cost was cache-writing the always-on prefix). Behind `ROUTING_ENABLED`, **off by default** — byte-identical to before when off.
 
 ## [0.1.1] — 2026-04-29
 
