@@ -102,5 +102,5 @@ Trade-off accepted: more code than E. Each line does an explicit, comprehensible
 
 - TODOS.md — "Conversation context across messages" item (this decision when decided supersedes that line)
 - `llm/anthropic_api.py` — agent loop where history will be injected as the messages prefix
-- `bot.py` — `handle_message` where history will be read/written via `context.chat_data`
+- `bot.py` — `handle_message` where history will be read/written via `storage/history.py` (`read_history` / `append_turn`)
 - python-telegram-bot docs — `PicklePersistence`, `chat_data`

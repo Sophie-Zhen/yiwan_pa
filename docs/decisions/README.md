@@ -69,3 +69,4 @@ Skip it for:
 | 0002 | [Pluggable LLM backend abstraction](0002-pluggable-llm-backend.md) | Decided | 2026-04-26 |
 | 0003 | [Self-written agent loop in AnthropicBackend](0003-self-written-agent-loop.md) | Decided | 2026-04-27 |
 | 0006 | [Per-item scheduler state schema](0006-scheduler-state-schema.md) | Decided | 2026-05-20 |
+| 0007 | [Per-domain tool registry](0007-per-domain-tool-registry.md) | Decided | 2026-06-13 |

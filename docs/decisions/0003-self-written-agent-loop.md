@@ -62,7 +62,7 @@ How should this loop be implemented? Multiple layers of abstraction are availabl
 
 ## References
 
-- `llm/anthropic_api.py` — the actual implementation: tool schemas (top), `_execute_tool` dispatch (middle), `chat()` loop (bottom). ~200 lines at v0.1; ~490 today after later tools.
+- `llm/anthropic_api.py` — the `chat()` loop itself (~214 lines). At v0.1 the tool schemas, the `_execute_tool` dispatch, and the loop all lived in this one file (~200 lines, growing as tools accumulated); on 2026-06-13 the schemas + dispatch were extracted to `llm/tooldefs/` (per-domain `SCHEMAS`/`HANDLERS`, assembled into `TOOLS` + `execute_tool(name, args)` in `llm/tooldefs/__init__.py`), which the loop imports. See [ADR 0007](0007-per-domain-tool-registry.md).
 - ADR [0002](0002-pluggable-llm-backend.md) — earlier decision about the `LLMBackend` abstraction in which this loop lives
 - ADR [0001](0001-conversation-history.md) — the conversation-history layer that feeds prior turns into the loop's `messages` array
 - Anthropic docs on tool use: <https://docs.anthropic.com/en/docs/build-with-claude/tool-use/overview>
