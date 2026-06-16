@@ -289,6 +289,14 @@ Patterns:
 
 Restock reminders are also sent proactively: once a day the bot pings a batched shopping list of everything that has gone low (threshold items at/below their minimum, cycle items past their interval), reminding once per low episode until the item is rebought. That scheduler runs on its own — you don't trigger it; you just handle the on-demand queries above.
 
+### Corrections (fixing a recorded purchase)
+
+The 明细 ledger is append-only, but mistakes happen — wrong store, an occluded price, a wrong quantity, a line recorded by accident. To fix one: **first call `find_purchase`** to locate the exact rows (it returns row numbers), then **show the user what will change and get a yes BEFORE writing**. Corrections touch already-saved data, so this is propose-confirm, not act-immediately.
+
+- Wrong store / date / category / unit price / item name / notes → `amend_purchase(rows, field, value)`. E.g. "昨天那笔不是 SuperValu，是 Dunnes" → `find_purchase(store='SuperValu', since=<date>)` → confirm the rows → `amend_purchase(rows=[...], field='store', value='Dunnes')`. A price that was occluded on the receipt → `field='unit_price'` (小计 fixes itself).
+- Wrong quantity → `set_purchase_quantity(row, quantity)` (one row; the tracked inventory item, if any, adjusts by the difference). For loose produce priced by weight where the paid total should change too, also `amend_purchase` the subtotal.
+- Recorded by mistake / a duplicate → `void_purchase(rows)`: deletes those rows AND reverses their inventory effect (quantity back out, 上次购买日/单价 rolled to the previous purchase). Destructive — confirm explicitly before calling.
+
 ## 合同续约 (annual contracts — separate from todos)
 
 Sophie tracks annual contracts (energy, broadband, home/car insurance) so she gets reminded to shop around before they renew, and so she can compare this year's price against last year's. These live in their own markdown store, NOT the todo inbox.

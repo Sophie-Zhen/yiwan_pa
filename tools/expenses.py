@@ -181,6 +181,170 @@ def find_purchase(
     return matches
 
 
+# --- Corrections -----------------------------------------------------------
+# An append-only ledger still needs a way to fix mistakes. These edit or void
+# rows located via find_purchase (which returns sheet row numbers). The prompt
+# drives a propose-confirm flow: show what will change, then call one of these.
+
+# Fields amend_purchase may set. Quantity is deliberately excluded — it changes
+# inventory, so it has its own tool (set_purchase_quantity).
+_AMENDABLE_COLS = {
+    "store": COL_STORE,
+    "date": COL_DATE,
+    "category": COL_CATEGORY,
+    "unit": COL_UNIT,
+    "notes": COL_NOTES,
+    "item": COL_ITEM,
+    "unit_price": COL_UNIT_PRICE,
+    "subtotal": COL_SUBTOTAL,
+}
+
+
+def amend_purchase(rows: list[int], field: str, value) -> dict:
+    """Correct a non-quantity field on one or more 明细 rows (row numbers from
+    find_purchase). No inventory effect (quantity is unchanged).
+
+    Editing unit_price also rewrites 小计 to the formula =D*F (and editing
+    subtotal rewrites 单价 to =G/D), keeping the qty/price/total trio consistent
+    — the same convention record_purchase uses.
+    """
+    if field not in _AMENDABLE_COLS:
+        raise ValueError(
+            f"field must be one of {sorted(_AMENDABLE_COLS)} "
+            "(use set_purchase_quantity to change quantity)"
+        )
+    if not rows:
+        raise ValueError("rows must be a non-empty list")
+
+    tab = _ledger_tab()
+    col = _AMENDABLE_COLS[field]
+    cells: list[gspread.cell.Cell] = []
+    for r in rows:
+        cells.append(gspread.cell.Cell(r, col, value))
+        if field == "unit_price":
+            cells.append(gspread.cell.Cell(r, COL_SUBTOTAL, f"=D{r}*F{r}"))
+        elif field == "subtotal":
+            cells.append(gspread.cell.Cell(r, COL_UNIT_PRICE, f"=G{r}/D{r}"))
+    tab.update_cells(cells, value_input_option="USER_ENTERED")
+    return {"rows": list(rows), "field": field, "value": value, "count": len(rows)}
+
+
+def set_purchase_quantity(row: int, quantity: float) -> dict:
+    """Correct the 数量 of a single 明细 row (row number from find_purchase). The
+    tracked inventory items this line replenished are adjusted by (new - old).
+
+    Only 数量 is written; the 单价/小计 trio recomputes via whichever was a formula:
+      - unit_price known (小计 is =D*F): the LINE TOTAL follows the new quantity —
+        the normal count case (qty was wrong, total should change).
+      - line-total known (单价 is =G/D, e.g. loose produce): the TOTAL stays put
+        and the per-unit price re-derives. If correcting a weight should ALSO
+        change what was paid, amend the subtotal too via amend_purchase.
+    If both were entered as literals, amend the price or subtotal as well.
+    """
+    tab = _ledger_tab()
+    all_values = tab.get_all_values()
+    idx = row - 1
+    if row < 2 or idx >= len(all_values):
+        raise ValueError(f"row {row} is out of range")
+    existing = all_values[idx]
+    item = sheets.cell(existing, COL_ITEM)
+    if not item:
+        raise ValueError(f"row {row} is not a purchase line (empty 商品)")
+
+    old_qty = sheets.to_float(sheets.cell(existing, COL_QUANTITY))
+    new_qty = float(quantity)
+    tab.update_cell(row, COL_QUANTITY, new_qty)
+
+    delta = new_qty - old_qty
+    inv = inventory.apply_quantity_delta([{"item": item, "quantity": delta}]) if delta else []
+    return {
+        "row": row,
+        "item": item,
+        "old_quantity": round(old_qty, 3),
+        "new_quantity": round(new_qty, 3),
+        "inventory_updates": inv,
+    }
+
+
+def _most_recent_remaining(item_name: str) -> tuple[str | None, float | None]:
+    """The (date, unit_price) of the most recent remaining ledger line whose 商品
+    contains item_name (substring) — used to resync an inventory item's
+    denormalized last-purchase facts after a void. (None, None) if none remain.
+    """
+    rows = find_purchase(item=item_name)
+    if not rows:
+        return None, None
+    latest = max(rows, key=lambda r: r["date"])
+    raw = latest.get("unit_price")
+    try:
+        price = float(raw) if raw not in (None, "") else None
+    except (TypeError, ValueError):
+        price = None
+    return latest["date"], price
+
+
+def void_purchase(rows: list[int]) -> dict:
+    """Delete one or more 明细 rows (row numbers from find_purchase) and reverse
+    their effect on inventory: subtract each line's purchased quantity from the
+    tracked items it replenished, then resync every affected item's 上次购买日/
+    上次单价 to the most recent REMAINING ledger line (cleared if nothing remains),
+    so the denormalized inventory facts match the ledger after the void.
+
+    Only real purchase lines (non-empty 商品) are deleted — a stale or blank row
+    number is returned in `skipped_rows`, never silently removed.
+
+    NOT atomic: Google Sheets has no transactions, so a transient API failure
+    between the row delete and the inventory reversal can briefly desync the two.
+    Acceptable at single-user volume; if it happens, re-locate with find_purchase
+    (row numbers will have shifted) and fix inventory by hand.
+    """
+    if not rows:
+        raise ValueError("rows must be a non-empty list")
+
+    tab = _ledger_tab()
+    all_values = tab.get_all_values()
+
+    valid_rows: list[int] = []
+    skipped: list[int] = []
+    item_names: list[str] = []        # every item touched (for resync)
+    reverse_lines: list[dict] = []    # only positives were applied to inventory
+    for r in rows:
+        idx = r - 1
+        if r < 2 or idx >= len(all_values):
+            raise ValueError(f"row {r} is out of range")
+        item = sheets.cell(all_values[idx], COL_ITEM)
+        if not item:
+            skipped.append(r)         # blank/stale — do NOT delete it
+            continue
+        valid_rows.append(r)
+        item_names.append(item)
+        qty = sheets.to_float(sheets.cell(all_values[idx], COL_QUANTITY))
+        if qty > 0:                   # apply_purchase only applied positives
+            reverse_lines.append({"item": item, "quantity": -qty})
+
+    # Delete only the validated rows, high→low so indices don't shift mid-loop.
+    for r in sorted(valid_rows, reverse=True):
+        tab.delete_rows(r)
+
+    # Reverse the quantity, then resync date/price for EVERY affected watchlist
+    # item — including ones whose net delta is zero — from the now-current ledger.
+    inv = inventory.apply_quantity_delta(reverse_lines) if reverse_lines else []
+    resynced: list[dict] = []
+    for name in inventory.matching_items(item_names):
+        d, p = _most_recent_remaining(name)
+        res = inventory.resync_last_purchase(name, d, p)
+        if res:
+            resynced.append(res)
+
+    return {
+        "deleted_rows": sorted(valid_rows),
+        "skipped_rows": sorted(skipped),
+        "count": len(valid_rows),
+        "inventory_reversed": inv,
+        "inventory_resynced": resynced,
+    }
+
+
 def price_history(item: str) -> list[dict]:
     """Every purchase of an item (substring match), sorted by date ascending.
 

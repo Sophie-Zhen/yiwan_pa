@@ -3,11 +3,14 @@
 Tool schemas + dispatch handlers for the expenses domain.
 """
 from tools.expenses import (
+    amend_purchase,
     find_purchase,
     price_history,
     record_purchase,
+    set_purchase_quantity,
     spend_summary,
     top_items,
+    void_purchase,
 )
 from tools.inventory import (
     adjust_inventory,
@@ -38,6 +41,13 @@ HANDLERS = {
     "list_inventory": lambda a: list_inventory(
         status_filter=a.get("status_filter", "active"), low_only=a.get("low_only", False),
     ),
+    "amend_purchase": lambda a: amend_purchase(
+        rows=a["rows"], field=a["field"], value=a["value"],
+    ),
+    "set_purchase_quantity": lambda a: set_purchase_quantity(
+        row=a["row"], quantity=a["quantity"],
+    ),
+    "void_purchase": lambda a: void_purchase(rows=a["rows"]),
 }
 
 
@@ -269,4 +279,48 @@ SCHEMAS = [{'name': 'record_purchase',
                                   'status_filter': {'type': 'string',
                                                     'description': 'Inventory status to filter '
                                                                    "by; default 'active'."}},
-                   'required': []}}]
+                   'required': []}},
+ {'name': 'amend_purchase',
+  'description': 'Correct a NON-quantity field on already-recorded 花销 明细 rows (e.g. wrong '
+                 'store, wrong date, a price that was occluded on the receipt). First call '
+                 'find_purchase to locate the rows, show the user exactly what will change '
+                 '(which rows, old→new), get confirmation, THEN call this. Editing unit_price '
+                 'also fixes 小计 (= 数量 × 单价); editing subtotal fixes 单价. To change quantity '
+                 'use set_purchase_quantity; to delete a line use void_purchase.',
+  'input_schema': {'type': 'object',
+                   'properties': {'rows': {'type': 'array',
+                                           'items': {'type': 'integer'},
+                                           'description': 'Sheet row numbers from find_purchase '
+                                                          'to amend (all get the same change).'},
+                                  'field': {'type': 'string',
+                                            'enum': ['store', 'date', 'category', 'unit',
+                                                     'notes', 'item', 'unit_price', 'subtotal'],
+                                            'description': 'Which field to set on every row.'},
+                                  'value': {'type': ['string', 'number'],
+                                            'description': 'New value: string for '
+                                                           'store/date/category/unit/notes/item, '
+                                                           'number for unit_price/subtotal.'}},
+                   'required': ['rows', 'field', 'value']}},
+ {'name': 'set_purchase_quantity',
+  'description': 'Correct the quantity of a single 花销 明细 row (row number from find_purchase). '
+                 '小计 recomputes, and any tracked inventory item this line replenished is '
+                 'adjusted by the difference (new − old). Locate with find_purchase and confirm '
+                 'before calling. For non-quantity fields use amend_purchase.',
+  'input_schema': {'type': 'object',
+                   'properties': {'row': {'type': 'integer',
+                                          'description': 'Sheet row number from find_purchase.'},
+                                  'quantity': {'type': 'number',
+                                               'description': 'The corrected quantity.'}},
+                   'required': ['row', 'quantity']}},
+ {'name': 'void_purchase',
+  'description': 'Delete one or more 花销 明细 rows recorded by mistake (row numbers from '
+                 'find_purchase) and reverse their inventory effect — subtract the quantities, '
+                 'and roll 上次购买日/上次单价 back to the most recent remaining purchase (cleared if '
+                 'none remain). DESTRUCTIVE: always locate with find_purchase and get explicit '
+                 'confirmation first. To fix a value instead of deleting, use amend_purchase.',
+  'input_schema': {'type': 'object',
+                   'properties': {'rows': {'type': 'array',
+                                           'items': {'type': 'integer'},
+                                           'description': 'Sheet row numbers from find_purchase '
+                                                          'to delete.'}},
+                   'required': ['rows']}}]
