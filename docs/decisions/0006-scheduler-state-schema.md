@@ -4,6 +4,8 @@
 - **Date**: 2026-05-20
 - **Tags**: #push-strategy #storage
 
+> **Amended 2026-06-15**: The `_item_payload` filter referenced below (Decision, References) moved from `llm/anthropic_api.py` to `llm/tooldefs/todos.py` in the per-domain tool-registry split (commit `d06a796`, [ADR 0007](0007-per-domain-tool-registry.md)). The decision is unchanged — `_item_payload` is still the single filter boundary and still excludes `alerts`/`alerted`/`alerted_stale`; only its module moved.
+
 ## Problem
 
 The Phase 1 push redesign (per-item T-N alerts, evening digest, morning-digest stale section) needs durable per-item state, otherwise the 60s scan loop re-fires on every tick or loses progress across restarts.
