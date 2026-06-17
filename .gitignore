@@ -14,3 +14,6 @@ data/history/
 data/credentials/
 data/active_tab.txt
 FIELDNOTES.md
+
+# Local-only finance tool — contains personal/account detail; never commit.
+scripts/consolidate.py
