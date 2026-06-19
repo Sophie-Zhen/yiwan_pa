@@ -7,6 +7,7 @@ from tools.expenses import (
     find_purchase,
     price_history,
     record_purchase,
+    record_transaction,
     set_purchase_quantity,
     spend_summary,
     top_items,
@@ -21,6 +22,11 @@ from tools.inventory import (
 HANDLERS = {
     "record_purchase": lambda a: record_purchase(
         date=a["date"], store=a["store"], items=a["items"], notes=a.get("notes"),
+    ),
+    "record_transaction": lambda a: record_transaction(
+        date=a["date"], description=a["description"], amount=a["amount"],
+        direction=a["direction"], account=a.get("account", "现金"),
+        category=a.get("category"), notes=a.get("notes"),
     ),
     "find_purchase": lambda a: find_purchase(
         item=a.get("item"), store=a.get("store"), since=a.get("since"), until=a.get("until"),
@@ -138,6 +144,44 @@ SCHEMAS = [{'name': 'record_purchase',
                                                            'to item rows that have no note of '
                                                            'their own.'}},
                    'required': ['date', 'store', 'items']}},
+ {'name': 'record_transaction',
+  'description': 'Record ONE manually-tracked transaction in the 单笔 (transactions) ledger — '
+                 'the complete one-row-per-transaction record. Use this ONLY for money a bank '
+                 'statement will NOT import: CASH spending or income, a cash settle with '
+                 'someone. Examples: "付 AnyVan 尾款现金 120" / "现金买菜 25" / "收到现金 200". '
+                 'direction is "支出" (money out) or "收入" (money in); amount is the positive '
+                 'number — the sign is applied automatically. account defaults to 现金. For a '
+                 '支出, set category to one of the 单笔 buckets: 能源/通讯/交通/燃料/充电/超市/食品/面包/咖啡豆/'
+                 '餐饮/日用/家居/垃圾处理/装修/保险/税费/软件/运动/旅游/娱乐/教育/快递/其他 (leave blank for 收入). '
+                 'DO NOT use this for card/bank purchases — the monthly statement import already '
+                 'brings those into 单笔, so logging them here double-counts. For a supermarket '
+                 'receipt with multiple line items, use record_purchase (→ 明细) instead.',
+  'input_schema': {'type': 'object',
+                   'properties': {'date': {'type': 'string',
+                                           'description': 'Transaction date YYYY-MM-DD (use '
+                                                          'today if the user gives none).'},
+                                  'description': {'type': 'string',
+                                                  'description': 'What it was, e.g. "AnyVan '
+                                                                 'final payment (curtain '
+                                                                 'track)".'},
+                                  'amount': {'type': 'number',
+                                             'description': 'Positive magnitude in EUR; the '
+                                                            'sign is set from direction.'},
+                                  'direction': {'type': 'string',
+                                                'enum': ['支出', '收入'],
+                                                'description': '支出 = money out (stored '
+                                                               'negative), 收入 = money in '
+                                                               '(stored positive).'},
+                                  'account': {'type': 'string',
+                                              'description': 'Source of funds. Defaults to 现金 '
+                                                             '(cash) — the usual manual case.'},
+                                  'category': {'type': 'string',
+                                               'description': 'For 支出: a 单笔 taxonomy bucket '
+                                                              '(交通/餐饮/装修/日用/…). Omit for '
+                                                              '收入.'},
+                                  'notes': {'type': 'string',
+                                            'description': 'Optional note.'}},
+                   'required': ['date', 'description', 'amount', 'direction']}},
  {'name': 'find_purchase',
   'description': 'Look up line items in the 花销 明细 ledger. Filters AND together: item '
                  '(substring), store (substring), since/until (inclusive YYYY-MM-DD date '

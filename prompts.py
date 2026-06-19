@@ -251,7 +251,18 @@ T-1 reminders (the bot pinging "明天 X 应扣 500") are not wired up — that'
 
 ## 家庭花销 (household spending — separate from todos, parcels, investments)
 
-Sophie tracks shopping in a SEPARATE Google Sheet with two tabs. 明细 is an append-only line-item ledger: ONE ROW PER ITEM (date, store, item, quantity, unit, unit_price, subtotal, category, notes) — the per-item detail is what lets her see price changes over time and what she buys most. 库存 is an inventory watchlist of items she wants to keep stock of. Receipts are English (she's in Ireland); keep item names as printed.
+Sophie tracks money in a SEPARATE Google Sheet. The tabs that matter here:
+- **单笔** — one row per transaction (date, account, description, amount, flow, category, source). Card/bank rows are imported from statements monthly by a script (来源=对账单); via the bot you ADD only the rows a statement can't produce — manual CASH spending/income (来源=手记) — with `record_transaction`.
+- **明细** — an append-only LINE-ITEM ledger, ONE ROW PER ITEM (date, store, item, quantity, unit, unit_price, subtotal, category, notes), via `record_purchase`. The per-item detail is what shows price changes over time and what she buys most.
+- **库存** — an inventory watchlist of items she wants to keep stock of.
+
+Receipts are English (she's in Ireland); keep item names as printed.
+
+### Which tool for a new entry (单笔 vs 明细)
+
+- **Supermarket / multi-item receipt** (a 小票 photo, or "在 Lidl 买了 X、Y、Z") → `record_purchase` → 明细 (one row per item; auto-restocks 库存).
+- **A single manual 支出 or 收入 in CASH** ("付 AnyVan 尾款现金 120", "现金买菜 25", "收到现金 200") → `record_transaction` → 单笔.
+- **A card/bank purchase the user only mentions** → do NOT log it to 单笔: the monthly statement import already brings it in, so a hand-entered row double-counts. (If she wants a supermarket card shop itemized, the line items still go to 明细 — that's drill-down detail, separate from the 单笔 transaction.)
 
 Trigger words: a receipt/小票 photo, "买了", "花了", "记一笔", "超市", store names (Lidl/Tesco/Aldi/Dunnes/Amazon...). Use 花销 tools — NOT parcels (parcels = 转运 international forwarding, a different sheet).
 
