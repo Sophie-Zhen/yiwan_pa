@@ -161,11 +161,81 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await _send_reply(update.message, reply)
 
 
+async def _process_images(message, chat_id: int, images: list[bytes], caption: str) -> None:
+    """Run one vision LLM round-trip over `images` and reply once.
+
+    Shared by the single-photo and album (media-group) paths so both behave
+    identically apart from the image count. `message` is the reply anchor.
+    """
+    marker = "[图片]" if len(images) == 1 else f"[图片 ×{len(images)}]"
+
+    logger.info(
+        "user (chat %s, %d image(s), %d bytes total, caption=%r)",
+        chat_id,
+        len(images),
+        sum(len(b) for b in images),
+        caption,
+    )
+
+    history = read_history(chat_id)
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    user_message = f"[Now: {now_str}] {marker} {caption}".strip()
+
+    domains = route_domains(caption, has_image=True)
+    try:
+        reply = await _ask_llm(user_message, history=history, images=images, domains=domains)
+    except Exception as exc:
+        logger.exception("photo backend.chat failed")
+        reply = f"[error] {exc}"
+
+    # History stores the caption + [图片] marker so future turns know image(s)
+    # were sent, but NOT the bytes — they would balloon the JSONL file and the
+    # model can't re-look at past images on subsequent turns anyway.
+    history_text = f"{marker} {caption}".strip()
+    append_turn(chat_id, history_text, reply)
+
+    logger.info("bot: %s", reply[:200])
+    await _send_reply(message, reply)
+
+
+# Album aggregation. Telegram delivers a multi-photo album as N separate photo
+# updates that share one media_group_id, fired back-to-back. We buffer each
+# group's images and flush them as ONE LLM call once no new photo has arrived
+# for _GROUP_DEBOUNCE_SECONDS — so several screenshots of the same order are
+# read together instead of as N unrelated single-image calls. A lone photo has
+# media_group_id=None and is processed immediately (no debounce delay).
+#
+# The window must exceed the GAP BETWEEN consecutive photos, not the whole
+# album: PTB processes updates sequentially, and each handler re-arms the timer
+# only AFTER it has downloaded its image — so on a slow Pi link the gap is
+# roughly one image's download time. 3s leaves margin for that while keeping the
+# album reply prompt. Only albums wait; lone photos are unaffected. Tune if a Pi
+# album ever splits into two replies (gap exceeded the window).
+_GROUP_DEBOUNCE_SECONDS = 3.0
+_media_groups: dict[str, dict] = {}
+
+
+async def _flush_media_group(group_id: str) -> None:
+    """Fire _GROUP_DEBOUNCE_SECONDS after the last photo of `group_id` arrived;
+    rescheduled (and the prior task cancelled) by every new photo, so reaching
+    the flush means the album is complete."""
+    try:
+        await asyncio.sleep(_GROUP_DEBOUNCE_SECONDS)
+    except asyncio.CancelledError:
+        return
+    group = _media_groups.pop(group_id, None)
+    if not group:
+        return
+    await _process_images(
+        group["message"], group["chat_id"], group["images"], group["caption"]
+    )
+
+
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Image messages — typically a parcel order screenshot or warehouse
     arrival notification. The caption (if any) gives the LLM hints about
     platform / context; without one, the LLM still has to identify the type
-    from the image.
+    from the image. Multi-photo albums are buffered and processed together.
     """
     chat_id = update.effective_chat.id
     if not _is_authorized(update):
@@ -180,32 +250,29 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     image_bytes = bytes(await file.download_as_bytearray())
     caption = (update.message.caption or "").strip()
 
-    logger.info(
-        "user (chat %s, photo %d bytes, caption=%r)",
-        chat_id,
-        len(image_bytes),
-        caption,
-    )
+    group_id = update.message.media_group_id
+    if group_id is None:
+        await _process_images(update.message, chat_id, [image_bytes], caption)
+        return
 
-    history = read_history(chat_id)
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-    user_message = f"[Now: {now_str}] [图片] {caption}" if caption else f"[Now: {now_str}] [图片]"
-
-    domains = route_domains(caption, has_image=True)
-    try:
-        reply = await _ask_llm(user_message, history=history, images=[image_bytes], domains=domains)
-    except Exception as exc:
-        logger.exception("photo backend.chat failed")
-        reply = f"[error] {exc}"
-
-    # History stores the caption + [图片] marker so future turns know an image
-    # was sent, but NOT the bytes — they would balloon the JSONL file and the
-    # model can't re-look at past images on subsequent turns anyway.
-    history_text = f"[图片] {caption}" if caption else "[图片]"
-    append_turn(chat_id, history_text, reply)
-
-    logger.info("bot: %s", reply[:200])
-    await _send_reply(update.message, reply)
+    # Album: buffer this image and (re)arm the debounced flush. Single-threaded
+    # asyncio + sequential update processing means these dict ops need no lock.
+    group = _media_groups.get(group_id)
+    if group is None:
+        group = {
+            "chat_id": chat_id,
+            "message": update.message,  # reply anchor = first photo of the album
+            "images": [],
+            "caption": "",
+            "task": None,
+        }
+        _media_groups[group_id] = group
+    group["images"].append(image_bytes)
+    if caption and not group["caption"]:  # caption rides on one album member
+        group["caption"] = caption
+    if group["task"] is not None:
+        group["task"].cancel()
+    group["task"] = asyncio.create_task(_flush_media_group(group_id))
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
