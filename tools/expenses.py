@@ -133,6 +133,66 @@ def record_purchase(
     }
 
 
+# --- 单笔 (transactions ledger) --------------------------------------------
+# The COMPLETE one-row-per-transaction record. Card/bank rows are imported from
+# statements monthly by scripts/consolidate.py (来源=对账单); this tool adds only
+# the rows a statement can NEVER produce — manual CASH spending/income (来源=手记)
+# — so they aren't lost. Columns mirror consolidate.py's SHEET_TAB exactly, plus
+# 备注 (col H, hand-added in the live sheet), so a bot row and a script row match.
+TXN_TAB = "单笔"
+TXN_LAST_COL = "H"
+_FLOW_SIGN = {"支出": -1, "收入": 1}
+
+
+def _txn_tab() -> gspread.Worksheet:
+    return sheets.open_sheet("EXPENSES_SHEET_ID").worksheet(TXN_TAB)
+
+
+def record_transaction(
+    date: str,
+    description: str,
+    amount: float,
+    direction: str,
+    account: str = "现金",
+    category: str | None = None,
+    notes: str | None = None,
+) -> dict:
+    """Append one manually-tracked transaction to the 单笔 ledger.
+
+    For money the bank statement will NOT import: cash spending/income, a cash
+    settle. Card/bank purchases must NOT go here — the monthly statement import
+    brings those into 单笔, so logging them by hand would double-count.
+
+    `direction` is '支出' or '收入'. `amount` is the positive magnitude; it is
+    stored signed (支出 negative, 收入 positive) to match the statement rows.
+    `account` defaults to 现金 (the usual manual case). `category` is the 支出
+    bucket from the 单笔 taxonomy; left blank for 收入 (matches consolidate.py).
+    来源 is always 手记, marking the row hand-entered vs a 对账单 import.
+    """
+    if direction not in _FLOW_SIGN:
+        raise ValueError(f"direction must be one of {sorted(_FLOW_SIGN)}, got {direction!r}")
+    signed = round(_FLOW_SIGN[direction] * abs(float(amount)), 2)
+    cat = (category or "") if direction == "支出" else ""
+
+    tab = _txn_tab()
+    row_index = sheets.first_empty_row(tab, 1)
+    row = [date, account, description, signed, direction, cat, "手记", notes or ""]
+    tab.update(
+        range_name=f"A{row_index}:{TXN_LAST_COL}{row_index}",
+        values=[row],
+        value_input_option="USER_ENTERED",
+    )
+    return {
+        "row": row_index,
+        "date": date,
+        "account": account,
+        "description": description,
+        "amount": signed,
+        "direction": direction,
+        "category": cat,
+    }
+
+
 def find_purchase(
     item: str | None = None,
     store: str | None = None,

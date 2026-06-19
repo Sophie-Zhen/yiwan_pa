@@ -22,18 +22,23 @@ from tools import expenses as exp
 load_dotenv()
 
 
-def _delete_rows(row_indices: list[int]) -> None:
+def _delete_from(tab_name: str, row_indices: list[int]) -> None:
     if not row_indices:
         return
     client = gspread.service_account(filename=os.environ["GOOGLE_SHEETS_CREDENTIALS"])
     ss = client.open_by_key(os.environ["EXPENSES_SHEET_ID"])
-    tab = ss.worksheet(exp.LEDGER_TAB)
+    tab = ss.worksheet(tab_name)
     for r in sorted(row_indices, reverse=True):
         tab.delete_rows(r)
 
 
+def _delete_rows(row_indices: list[int]) -> None:
+    _delete_from(exp.LEDGER_TAB, row_indices)
+
+
 def main() -> None:
     created_rows: list[int] = []
+    created_txn_rows: list[int] = []
 
     try:
         print("\n=== record_purchase (multi-line receipt, mixed price/subtotal) ===")
@@ -130,10 +135,39 @@ def main() -> None:
         assert summ["total"] >= 560.0
         print("ok: fixed cost surfaces as its own category in the monthly total")
 
+        print("\n=== record_transaction (cash 支出 → 单笔, stored negative) ===")
+        t1 = exp.record_transaction(
+            date="2026-06-01", description="TEST_AnyVan cash final payment",
+            amount=120, direction="支出", category="装修", notes="TEST",
+        )
+        print(t1)
+        created_txn_rows.append(t1["row"])
+        assert t1["amount"] == -120.0, t1
+        assert t1["category"] == "装修"
+        assert t1["account"] == "现金"
+
+        print("\n=== record_transaction (cash 收入 → 单笔, stored positive, category blank) ===")
+        t2 = exp.record_transaction(
+            date="2026-06-02", description="TEST_cash in", amount=200,
+            direction="收入", category="ignored",
+        )
+        print(t2)
+        created_txn_rows.append(t2["row"])
+        assert t2["amount"] == 200.0, t2
+        assert t2["category"] == "", "收入 category should be blank"
+
+        print("\n=== record_transaction validation (bad direction) ===")
+        try:
+            exp.record_transaction(date="2026-06-01", description="x", amount=1, direction="支")
+            assert False, "bad direction should raise"
+        except ValueError as e:
+            print(f"ok: bad direction → {e}")
+
         print("\n[all assertions passed]")
     finally:
-        print(f"\ncleaning up rows {created_rows}")
+        print(f"\ncleaning up 明细 rows {created_rows}, 单笔 rows {created_txn_rows}")
         _delete_rows(created_rows)
+        _delete_from(exp.TXN_TAB, created_txn_rows)
         print("cleanup done")
 
 
