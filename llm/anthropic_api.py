@@ -62,6 +62,44 @@ def _extract_text(content: list[Any]) -> str:
     return "\n".join(b.text for b in content if b.type == "text").strip()
 
 
+def _cached_system(system_prompt: str) -> list[dict[str, Any]]:
+    """System prompt as a single cached block. This cache_control is the
+    CROSS-MESSAGE breakpoint: tools + system render before any message, so a
+    later message with the same tools+system reads this whole prefix at ~0.1x
+    instead of cold-writing it at 1.25x.
+
+    Was a top-level auto `cache_control`, which placed the only breakpoint after
+    the volatile last message — so the stable tools+system prefix was never
+    cached on its own, and every call cold-wrote it (cache_read=0 across
+    messages, confirmed in the Pi logs)."""
+    return [{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}]
+
+
+def _mark_last_block(messages: list[dict[str, Any]]) -> None:
+    """Move the message-level cache breakpoint to the last block of the last
+    message, first clearing any earlier message breakpoint so that system (1) +
+    message (1) stay within Anthropic's 4-breakpoint-per-request limit as the
+    tool-use loop appends turns.
+
+    This breakpoint caches the growing prefix WITHIN a single chat() loop: each
+    turn only appends, so the next turn reads the prior turn's write. (The
+    cross-message reuse comes from the system breakpoint above.) Assistant
+    blocks are SDK objects, not dicts, and are never the last message at call
+    time, so they are skipped untouched."""
+    for msg in messages:
+        content = msg["content"]
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict):
+                    block.pop("cache_control", None)
+    last = messages[-1]
+    if isinstance(last["content"], str):
+        last["content"] = [{"type": "text", "text": last["content"]}]
+    content = last["content"]
+    if isinstance(content, list) and content and isinstance(content[-1], dict):
+        content[-1]["cache_control"] = {"type": "ephemeral"}
+
+
 class AnthropicBackend(LLMBackend):
     def __init__(self, model: str = MODEL) -> None:
         self.client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from env
@@ -129,16 +167,22 @@ class AnthropicBackend(LLMBackend):
             messages.append({"role": "user", "content": user_message})
 
         for turn in range(MAX_LOOP_TURNS):
+            # Two explicit cache breakpoints replace the old top-level auto one:
+            #  - system block (_cached_system) → tools+system reused ACROSS msgs;
+            #  - last message block (_mark_last_block) → prefix reused WITHIN
+            #    this tool-use loop. The old top-level cache_control put the only
+            #    breakpoint after the volatile message, so nothing cached across
+            #    messages — every call cold-wrote the whole prefix.
+            _mark_last_block(messages)
             kwargs: dict[str, Any] = {
                 "model": model,
                 "max_tokens": MAX_TOKENS,
                 "tools": tools_to_use,
                 "messages": messages,
                 "thinking": {"type": "adaptive"},
-                "cache_control": {"type": "ephemeral"},
             }
             if system_prompt:
-                kwargs["system"] = system_prompt
+                kwargs["system"] = _cached_system(system_prompt)
 
             try:
                 response = self.client.messages.create(**kwargs)
