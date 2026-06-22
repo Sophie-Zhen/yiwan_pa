@@ -28,6 +28,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - **`set_status` is now the only tool that may change status** (commit `b190f9e`). `update_inbox_item.field` no longer accepts `"status"`; status transitions to `done` / `cancelled` also move the item to archive in one step, removing the prior separate `move_to_archive` tool.
 - **Telegram whitelist hardened** (commit `c4e1f9b`) — bot only responds to messages from `TELEGRAM_USER_CHAT_ID`; other chats are silently dropped at the handler entry point.
+- **Photo albums read together** — when one screenshot can't capture the whole order, send several at once: a multi-photo album (shared `media_group_id`) is now buffered and sent to the vision model as ONE call instead of N unrelated single-image calls, replying once. A lone photo is still processed immediately. The single-photo path is byte-identical to before; the album flush is debounced (`_GROUP_DEBOUNCE_SECONDS`, 3s) to wait out the slow-Pi gap between consecutive photos.
 
 ### Fixed
 
