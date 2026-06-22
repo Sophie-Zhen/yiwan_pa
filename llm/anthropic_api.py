@@ -113,6 +113,7 @@ class AnthropicBackend(LLMBackend):
         images: list[bytes] | None = None,
         documents: list[bytes] | None = None,
         tools: list[Any] | None = None,
+        cache: bool = True,
     ) -> str:
         # Per-message routed tool set (router/build_tools picks the active
         # domains' tools). None = the full TOOLS list. Frozen for the whole
@@ -167,13 +168,18 @@ class AnthropicBackend(LLMBackend):
             messages.append({"role": "user", "content": user_message})
 
         for turn in range(MAX_LOOP_TURNS):
-            # Two explicit cache breakpoints replace the old top-level auto one:
+            # Two explicit cache breakpoints (when cache=True) replace the old
+            # top-level auto one:
             #  - system block (_cached_system) → tools+system reused ACROSS msgs;
             #  - last message block (_mark_last_block) → prefix reused WITHIN
             #    this tool-use loop. The old top-level cache_control put the only
             #    breakpoint after the volatile message, so nothing cached across
             #    messages — every call cold-wrote the whole prefix.
-            _mark_last_block(messages)
+            # cache=False (isolated cron calls) skips both: that write is never
+            # read before the 5-min TTL expires, so caching it only pays 1.25x
+            # instead of 1.0x uncached.
+            if cache:
+                _mark_last_block(messages)
             kwargs: dict[str, Any] = {
                 "model": model,
                 "max_tokens": MAX_TOKENS,
@@ -182,7 +188,7 @@ class AnthropicBackend(LLMBackend):
                 "thinking": {"type": "adaptive"},
             }
             if system_prompt:
-                kwargs["system"] = _cached_system(system_prompt)
+                kwargs["system"] = _cached_system(system_prompt) if cache else system_prompt
 
             try:
                 response = self.client.messages.create(**kwargs)

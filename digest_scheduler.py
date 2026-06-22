@@ -70,8 +70,12 @@ async def _ask_llm(
 ) -> str:
     """Run a single LLM round-trip with the personal-assistant system prompt."""
     system_prompt = render_personal_assistant(USER_NAME)
+    # cache=False: digests fire on a cron, hours apart, so the 5-min prompt
+    # cache always expires before the next call — caching would only pay the
+    # 1.25x write premium for a write that is never read. Bill at 1.0x instead.
     return await asyncio.to_thread(
-        backend.chat, user_message, system_prompt, history, images, documents
+        backend.chat, user_message, system_prompt, history, images, documents,
+        cache=False,
     )
 
 

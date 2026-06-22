@@ -35,6 +35,7 @@ class ClaudeCodeBackend(LLMBackend):
         images: list[bytes] | None = None,
         documents: list[bytes] | None = None,
         tools: list | None = None,
+        cache: bool = True,
     ) -> str:
         # `history` is accepted to satisfy the LLMBackend interface but
         # intentionally ignored in v0.1.1 — see
@@ -46,6 +47,9 @@ class ClaudeCodeBackend(LLMBackend):
         # `tools` is the routed per-message schema list for the SDK backend; the
         # shell-out CLI manages its own tools, so it's accepted and dropped.
         del tools
+        # `cache` is the prompt-cache toggle for the API backend; the CLI manages
+        # its own caching, so it's accepted and dropped.
+        del cache
         if images:
             logger.warning(
                 "ClaudeCodeBackend received %d image(s) but vision is not "
