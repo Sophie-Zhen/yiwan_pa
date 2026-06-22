@@ -17,6 +17,7 @@ class LLMBackend(ABC):
         images: list[bytes] | None = None,
         documents: list[bytes] | None = None,
         tools: list | None = None,
+        cache: bool = True,
     ) -> str:
         """Send a single user message and return the assistant's reply.
 
@@ -42,6 +43,11 @@ class LLMBackend(ABC):
                 pick only the active domains' tools to shrink the prefix). None
                 means the backend uses its full default tool set. Backends that
                 manage their own tools (e.g. the shell-out CLI) ignore it.
+            cache: whether to mark prompt-cache breakpoints. Default True. Pass
+                False for isolated one-off calls (e.g. cron digests fired hours
+                apart): their cache write is never read back before the 5-min
+                TTL expires, so caching only adds the 1.25x write premium over
+                1.0x uncached. Backends without prompt caching ignore it.
 
         See docs/decisions/0001-conversation-history.md for the storage
         layer that produces `history`.
