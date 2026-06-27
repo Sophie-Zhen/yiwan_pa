@@ -95,9 +95,10 @@ async def _ask_llm(
 ) -> str:
     """Run a single LLM round-trip with the personal-assistant system prompt.
 
-    `domains` (from router.route_domains) selects which prompt sections + tools
-    ship, shrinking the per-call prefix. None = all domains — used by the canned
-    digest/todos commands and any direct caller, and byte-identical to before."""
+    `domains` selects which prompt sections + tools ship, shrinking the per-call
+    prefix. It comes from one of three places: a /<domain> slash-command tag, the
+    photo/PDF input-type router (route_domains), or the digest/todos commands
+    (which pass {"todos"}). None = all domains — the untagged plain-text path."""
     system_prompt = render_personal_assistant(USER_NAME, domains)
     tools = build_tools(domains)
     return await asyncio.to_thread(

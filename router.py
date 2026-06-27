@@ -1,27 +1,33 @@
-"""Per-message domain routing: decide which prompt sections + tool bundles ship.
+"""Input-type domain routing for PHOTO and PDF messages.
 
-Shrinks the per-call prefix by sending only the active domain(s)' instructions
-and tools instead of all of them (~18k -> ~5-6k tokens on a typical message).
-Returns a SET (union, never a single label) so a multi-domain message keeps
-every relevant section. Ambiguity or no signal => ALL domains => byte-identical
-to the pre-routing behavior, so a misroute degrades gracefully (the model just
-lacks some guidance) rather than failing.
+Decides which prompt sections + tool bundles ship for an image / document, so a
+photo or PDF call sends only the relevant domains (e.g. a photo -> parcels +
+expenses) instead of the full ~19k-token prefix. Returns a SET (union, never a
+single label) so a multi-domain message keeps every relevant section; on no
+signal it falls back to ALL domains, so a misroute degrades gracefully (the model
+just lacks some guidance) rather than failing.
 
-Ships behind ROUTING_ENABLED: while False, route_domains always returns ALL, so
-the wiring is a no-op and the bot is byte-for-byte today's behavior. Flip to True
-to actually narrow, after the byte-identity guard confirms the dark path matches.
+Scope note: the TEXT path no longer uses this. Text messages select their bundle
+by manual /<domain> slash-command tags (see bot._DOMAIN_COMMANDS), and an untagged
+text message loads all domains. route_domains is now called only by the photo /
+document handlers in bot.py, always with has_image or has_document set.
 
-Trigger words are lifted from the matching sections in prompts.py — keep the two
-in sync (scripts/test_router.py guards the coupling).
+The decisive part is the input-type rule (a photo is a parcel/receipt shot, a PDF
+is a document) — deterministic, not keyword-based. The caption `_TRIGGERS` regex
+only adds to that, and only on the rare captioned image/PDF (e.g. a photo of a
+paper policy captioned "保单" -> documents). Trigger words are lifted from the
+matching sections in prompts.py — keep the two in sync (scripts/test_router.py
+guards the coupling).
 """
 import os
 import re
 
 from prompts import ALL_DOMAINS
 
-# Off by default (ships dark): always return ALL = today's exact behavior. Flip
-# via env (ROUTING_ENABLED=true) so it can be enabled/rolled back on the Pi
-# without editing source, like LLM_BACKEND / USER_NAME.
+# Toggles photo/PDF routing without editing source (like LLM_BACKEND / USER_NAME).
+# When False, route_domains returns ALL domains, so an image/PDF ships the full
+# prefix; when True, it narrows to the input-type bundle. Default off; the Pi sets
+# ROUTING_ENABLED=true to get the smaller image/PDF prefix.
 ROUTING_ENABLED = os.getenv("ROUTING_ENABLED", "false").strip().lower() in ("1", "true", "yes")
 
 # domain -> compiled regex of trigger words (copied from each prompt section).
