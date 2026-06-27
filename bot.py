@@ -56,6 +56,23 @@ USER_LANGUAGE = os.getenv("USER_LANGUAGE", "Chinese")
 _chat_id_env = os.getenv("TELEGRAM_USER_CHAT_ID", "").strip()
 USER_CHAT_ID: int | None = int(_chat_id_env) if _chat_id_env else None
 
+# /<command> -> (domain bundle it loads, Telegram menu description). `todos` is
+# always-on (build_tools adds it), so each command ships: core prompt + todos
+# tools + this one domain's section & tools — a ~4-6k prefix instead of the full
+# ~19k. This dict is the single source of truth for BOTH the CommandHandler
+# registration in main() and the "/" command menu in _set_commands(), so the two
+# can't drift. Manually tagging a message is how the user opts into a small
+# prefix; an untagged message loads everything (full prefix, always correct).
+_DOMAIN_COMMANDS: dict[str, tuple[set[str], str]] = {
+    "spend":    ({"expenses"},    "记一笔家庭花销 / 超市小票"),
+    "parcel":   ({"parcels"},     "转运包裹下单 / 签收 / 入库"),
+    "fund":     ({"investments"}, "基金定投扣款 / 计划"),
+    "contract": ({"contracts"},   "合同续约 / 到期"),
+    "doc":      ({"documents"},   "文档存档与问答"),
+    "cwi":      ({"cwi"},         "CWI 教学日志"),
+    "todo":     ({"todos"},       "只记待办（最小 prefix）"),
+}
+
 
 def _is_authorized(update: Update) -> bool:
     """Fail closed: only the configured chat_id may invoke the LLM / tools.
@@ -127,14 +144,16 @@ async def _send_reply(message, text: str) -> None:
             logger.exception("failed to send a reply chunk (%d chars)", len(chunk))
 
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    chat_id = update.effective_chat.id
-    if not _is_authorized(update):
-        logger.warning("unauthorized chat %s blocked (message)", chat_id)
-        return
-    text = update.message.text
-    logger.info("user (chat %s): %s", chat_id, text)
+async def _handle_text(
+    message, chat_id: int, text: str, domains: set[str] | None
+) -> None:
+    """Shared text round-trip for plain messages AND the /<domain> tag commands.
 
+    `domains` selects which prompt sections + tools ship (None = all). The
+    plain-text path passes None (load everything — always correct, full prefix);
+    a /<domain> command passes that one domain's bundle to shrink the prefix.
+    This is the manual replacement for regex routing on text: tag to go small,
+    and forgetting to tag costs tokens, never a missing tool."""
     # Read recent history (sliding window: 6 turns AND last 30 min, whichever
     # is shorter — see storage.history). Empty list on first message.
     history = read_history(chat_id)
@@ -146,7 +165,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     prefixed = f"[Now: {now_str}]\n{text}"
 
-    domains = route_domains(text)
     try:
         reply = await _ask_llm(prefixed, history=history, domains=domains)
     except Exception as exc:
@@ -158,7 +176,47 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     append_turn(chat_id, text, reply)
 
     logger.info("bot: %s", reply[:200])
-    await _send_reply(update.message, reply)
+    await _send_reply(message, reply)
+
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    if not _is_authorized(update):
+        logger.warning("unauthorized chat %s blocked (message)", chat_id)
+        return
+    text = update.message.text
+    logger.info("user (chat %s): %s", chat_id, text)
+    # Untagged plain text loads all domains (full prefix, always correct). Use a
+    # /<domain> command to opt into a smaller prefix — see _DOMAIN_COMMANDS.
+    await _handle_text(update.message, chat_id, text, domains=None)
+
+
+def _command_body(text: str) -> str:
+    """Strip the leading '/cmd' (or '/cmd@bot') token from a command message and
+    return the rest verbatim. Splits only on the FIRST whitespace run, so a
+    multi-line body survives intact."""
+    parts = (text or "").split(None, 1)
+    return parts[1].strip() if len(parts) > 1 else ""
+
+
+def _make_domain_command(domains: set[str]):
+    """Build a /<domain> command handler that loads only `domains`' bundle. Called
+    once per _DOMAIN_COMMANDS entry, so the commands share _handle_text instead of
+    duplicating it."""
+
+    async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        chat_id = update.effective_chat.id
+        if not _is_authorized(update):
+            logger.warning("unauthorized chat %s blocked (domain command)", chat_id)
+            return
+        body = _command_body(update.message.text)
+        if not body:
+            await update.message.reply_text("用法：/<命令> 后面跟内容，例如 /spend 咖啡 8.99")
+            return
+        logger.info("user (chat %s) [%s]: %s", chat_id, ",".join(sorted(domains)), body)
+        await _handle_text(update.message, chat_id, body, domains)
+
+    return handler
 
 
 async def _process_images(message, chat_id: int, images: list[bytes], caption: str) -> None:
@@ -346,7 +404,8 @@ async def cmd_digest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         logger.warning("unauthorized chat %s blocked (/digest)", update.effective_chat.id)
         return
     try:
-        reply = await _ask_llm(render_morning_digest_request(USER_LANGUAGE))
+        # Digest only reads + formats the inbox: minimal todos-only bundle.
+        reply = await _ask_llm(render_morning_digest_request(USER_LANGUAGE), domains={"todos"})
     except Exception as exc:
         logger.exception("digest failed")
         reply = f"[error] {exc}"
@@ -361,7 +420,7 @@ async def cmd_todos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.warning("unauthorized chat %s blocked (/todos)", update.effective_chat.id)
         return
     try:
-        reply = await _ask_llm(render_todos_request(USER_LANGUAGE))
+        reply = await _ask_llm(render_todos_request(USER_LANGUAGE), domains={"todos"})
     except Exception as exc:
         logger.exception("todos failed")
         reply = f"[error] {exc}"
@@ -417,6 +476,7 @@ async def _set_commands(application: Application) -> None:
         BotCommand("digest", "Trigger today's morning digest"),
         BotCommand("todos", "List all pending items"),
         BotCommand("active", "Show or set the active parcel tab"),
+        *[BotCommand(cmd, desc) for cmd, (_d, desc) in _DOMAIN_COMMANDS.items()],
     ])
 
 
@@ -428,6 +488,8 @@ def main() -> None:
     app.add_handler(CommandHandler("digest", cmd_digest))
     app.add_handler(CommandHandler("todos", cmd_todos))
     app.add_handler(CommandHandler("active", cmd_active))
+    for _cmd, (_domains, _desc) in _DOMAIN_COMMANDS.items():
+        app.add_handler(CommandHandler(_cmd, _make_domain_command(_domains)))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))

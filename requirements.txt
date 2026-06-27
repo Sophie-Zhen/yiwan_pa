@@ -2,3 +2,6 @@ python-telegram-bot[job-queue]>=22.7,<23
 python-dotenv>=1.2,<2
 anthropic>=0.97,<0.98
 gspread>=6.2,<7
+# Optional, only for LLM_BACKEND=gemini (GeminiBackend). Imported lazily, so
+# anthropic / claude_code users can skip installing it.
+google-genai>=1.0,<2

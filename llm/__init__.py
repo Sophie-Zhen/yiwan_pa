@@ -12,6 +12,9 @@ Available backends:
   user's Claude Code subscription auth. No extra cost on top of the sub.
 - anthropic: uses the anthropic Python SDK with a self-written agent loop;
   requires ANTHROPIC_API_KEY. Pay-per-token but more controllable.
+- gemini: uses the google-genai SDK with a self-written agent loop; requires
+  GEMINI_API_KEY. Cheaper per token (Gemini 3.1 Pro ~$2/$12 vs Opus $5/$25);
+  no prompt caching and no web_search in v1 (see llm/gemini_api.py).
 """
 import os
 
@@ -29,4 +32,9 @@ def get_backend() -> LLMBackend:
         from .anthropic_api import AnthropicBackend
 
         return AnthropicBackend()
+    if name == "gemini":
+        # Lazily imported so non-gemini users don't need google-genai installed.
+        from .gemini_api import GeminiBackend
+
+        return GeminiBackend()
     raise ValueError(f"Unknown LLM_BACKEND: {name!r}")
