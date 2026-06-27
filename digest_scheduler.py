@@ -23,6 +23,7 @@ from dotenv import load_dotenv
 from telegram.ext import Application, ContextTypes
 
 from llm import get_backend
+from llm.tooldefs import build_tools
 from prompts import (
     render_evening_digest_request,
     render_morning_digest_request,
@@ -37,6 +38,13 @@ logger = logging.getLogger(__name__)
 backend = get_backend()
 USER_NAME = os.getenv("USER_NAME", "the user")
 USER_LANGUAGE = os.getenv("USER_LANGUAGE", "Chinese")
+
+# The digest only READS data/inbox.md and formats it — it never records a parcel,
+# expense, etc. — so it ships the minimal bundle: core prompt + todos tools (~4k
+# instead of the full ~19k prefix). This matters doubly because the cron digest
+# runs uncached (cache=False below), so the prefix is billed at full price twice
+# a day, every day.
+DIGEST_DOMAINS = {"todos"}
 
 _chat_id_env = os.getenv("TELEGRAM_USER_CHAT_ID", "").strip()
 USER_CHAT_ID: int | None = int(_chat_id_env) if _chat_id_env else None
@@ -69,13 +77,13 @@ async def _ask_llm(
     documents: list[bytes] | None = None,
 ) -> str:
     """Run a single LLM round-trip with the personal-assistant system prompt."""
-    system_prompt = render_personal_assistant(USER_NAME)
+    system_prompt = render_personal_assistant(USER_NAME, DIGEST_DOMAINS)
     # cache=False: digests fire on a cron, hours apart, so the 5-min prompt
     # cache always expires before the next call — caching would only pay the
     # 1.25x write premium for a write that is never read. Bill at 1.0x instead.
     return await asyncio.to_thread(
         backend.chat, user_message, system_prompt, history, images, documents,
-        cache=False,
+        build_tools(DIGEST_DOMAINS), cache=False,
     )
 
 

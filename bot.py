@@ -404,7 +404,8 @@ async def cmd_digest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         logger.warning("unauthorized chat %s blocked (/digest)", update.effective_chat.id)
         return
     try:
-        reply = await _ask_llm(render_morning_digest_request(USER_LANGUAGE))
+        # Digest only reads + formats the inbox: minimal todos-only bundle.
+        reply = await _ask_llm(render_morning_digest_request(USER_LANGUAGE), domains={"todos"})
     except Exception as exc:
         logger.exception("digest failed")
         reply = f"[error] {exc}"
@@ -419,7 +420,7 @@ async def cmd_todos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.warning("unauthorized chat %s blocked (/todos)", update.effective_chat.id)
         return
     try:
-        reply = await _ask_llm(render_todos_request(USER_LANGUAGE))
+        reply = await _ask_llm(render_todos_request(USER_LANGUAGE), domains={"todos"})
     except Exception as exc:
         logger.exception("todos failed")
         reply = f"[error] {exc}"
