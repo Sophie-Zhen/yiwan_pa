@@ -16,7 +16,7 @@ import os
 from datetime import datetime
 
 from dotenv import load_dotenv
-from telegram import BotCommand, Update
+from telegram import BotCommand, ForceReply, Update
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -72,6 +72,13 @@ _DOMAIN_COMMANDS: dict[str, tuple[set[str], str]] = {
     "cwi":      ({"cwi"},         "CWI 教学日志"),
     "todo":     ({"todos"},       "只记待办（最小 prefix）"),
 }
+
+# message_id of a /<domain> ForceReply prompt -> the domain bundle to load when
+# the user replies to it. Tapping a command from Telegram's menu always SENDS it
+# (the Bot API has no "insert into input box" option), so an empty /<domain>
+# replies with a ForceReply prompt and the user just types the content; their
+# reply is routed back here. Popped on use; bounded against ignored prompts.
+_pending_prompts: dict[int, set[str]] = {}
 
 
 def _is_authorized(update: Update) -> bool:
@@ -187,9 +194,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     text = update.message.text
     logger.info("user (chat %s): %s", chat_id, text)
-    # Untagged plain text loads all domains (full prefix, always correct). Use a
-    # /<domain> command to opt into a smaller prefix — see _DOMAIN_COMMANDS.
-    await _handle_text(update.message, chat_id, text, domains=None)
+    # A reply to a /<domain> ForceReply prompt routes to that domain's bundle;
+    # otherwise untagged plain text loads all domains (full prefix, always
+    # correct). Tag via a /<domain> command to opt into a smaller prefix.
+    domains = None
+    reply_to = update.message.reply_to_message
+    if reply_to is not None:
+        domains = _pending_prompts.pop(reply_to.message_id, None)
+    await _handle_text(update.message, chat_id, text, domains=domains)
 
 
 def _command_body(text: str) -> str:
@@ -200,10 +212,16 @@ def _command_body(text: str) -> str:
     return parts[1].strip() if len(parts) > 1 else ""
 
 
-def _make_domain_command(domains: set[str]):
-    """Build a /<domain> command handler that loads only `domains`' bundle. Called
+def _make_domain_command(cmd: str, domains: set[str]):
+    """Build a /<cmd> command handler that loads only `domains`' bundle. Called
     once per _DOMAIN_COMMANDS entry, so the commands share _handle_text instead of
-    duplicating it."""
+    duplicating it.
+
+    An empty body — what you get by tapping the command from Telegram's "/" menu,
+    which sends it with no text — replies with a ForceReply prompt instead of a
+    usage error. So tapping the command becomes "tap → type the content", with no
+    need to hand-type /<cmd>; the user's reply is routed back to this domain via
+    _pending_prompts."""
 
     async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         chat_id = update.effective_chat.id
@@ -212,7 +230,13 @@ def _make_domain_command(domains: set[str]):
             return
         body = _command_body(update.message.text)
         if not body:
-            await update.message.reply_text("用法：/<命令> 后面跟内容，例如 /spend 咖啡 8.99")
+            prompt = await update.message.reply_text(
+                f"/{cmd} —— 直接回复这条消息输入内容即可（记账或查询都行）。",
+                reply_markup=ForceReply(input_field_placeholder="输入内容…"),
+            )
+            if len(_pending_prompts) >= 50:  # drop oldest; ignored prompts can't pile up
+                _pending_prompts.pop(next(iter(_pending_prompts)))
+            _pending_prompts[prompt.message_id] = domains
             return
         logger.info("user (chat %s) [%s]: %s", chat_id, ",".join(sorted(domains)), body)
         await _handle_text(update.message, chat_id, body, domains)
@@ -490,7 +514,7 @@ def main() -> None:
     app.add_handler(CommandHandler("todos", cmd_todos))
     app.add_handler(CommandHandler("active", cmd_active))
     for _cmd, (_domains, _desc) in _DOMAIN_COMMANDS.items():
-        app.add_handler(CommandHandler(_cmd, _make_domain_command(_domains)))
+        app.add_handler(CommandHandler(_cmd, _make_domain_command(_cmd, _domains)))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
