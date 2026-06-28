@@ -111,7 +111,7 @@ Real design records live in [`docs/decisions/`](docs/decisions/) (ADR format). H
 - **Python 3.12+**
 - **[python-telegram-bot](https://python-telegram-bot.org/) 21+** — Telegram client + JobQueue scheduling
 - **[anthropic](https://docs.anthropic.com/) Python SDK** — production LLM backend
-- **Claude Opus 4.7** — primary model (Anthropic API). Sonnet 4.6 also tested.
+- **Claude Sonnet 4.6** — default model for text + vision; **Opus 4.8** for PDF extraction (Anthropic API).
 - **Docker + Docker Compose** — production deployment on Raspberry Pi 5
 - **[Tailscale](https://tailscale.com/)** — remote access to the Pi for ops
 - **Standard library only** for storage, scheduling math, JSON handling — no DB, no ORM

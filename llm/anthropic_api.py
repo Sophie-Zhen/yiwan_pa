@@ -17,15 +17,15 @@ Persistent state lives in data/ files and the Google Sheets, manipulated via the
 domain tool modules.
 
 Notes on configuration:
-- Model defaults to Opus 4.7. Switch to `claude-sonnet-4-6` for ~3x lower
-  cost on simple workloads if Opus feels excessive.
+- Models are tiered per task (see MODEL / VISION_MODEL / DOCUMENT_MODEL below):
+  everyday text and vision run on Sonnet 4.6, PDF extraction on Opus 4.8.
 - Top-level `cache_control={"type": "ephemeral"}` auto-caches the last
   cacheable block. With render order tools → system → messages, this caches
   tools + system together. Subsequent loop turns within the same chat()
   call (and chats within ~5 minutes) read from cache instead of paying full
   input price for the prefix.
 - `thinking={"type": "adaptive"}` lets the model decide when extra reasoning
-  helps. Off by default on Opus 4.7; turning it on gives headroom for harder
+  helps. Off by default; turning it on gives headroom for harder
   intents without forcing thinking on simple ones.
 """
 import base64
@@ -40,13 +40,20 @@ from .tooldefs import TOOLS, execute_tool
 
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-opus-4-7"
-# Vision calls swap to Sonnet 4.6 — ~5x cheaper input price ($3/M vs $15/M)
-# with no quality loss observed on parcel screenshots in scripts/spike_vision.py.
-# Image tokens (~1700 per phone screenshot) don't cache, so Opus pricing on
-# them would noticeably bump the bill at the user's expected ~40 screenshots
-# per shipment batch.
+# Model tiers, set per task ("分类设置，够用就行"):
+#  - MODEL: the default for everyday text — capture / query / status / the
+#    /<domain> commands / the digest. Sonnet 4.6 is plenty for the
+#    instruction-following + tool-use these need; Opus would be overkill.
+#  - VISION_MODEL: image screenshots (parcel orders / receipts). Sonnet tier —
+#    no quality loss on screenshots in scripts/spike_vision.py, and image tokens
+#    don't cache, so a pricier model would noticeably bump the bill at the user's
+#    ~40 screenshots per shipment batch.
+#  - DOCUMENT_MODEL: PDF extraction (insurance policies etc.) — the one
+#    high-stakes, once-per-doc task where a wrong excess/premium number is
+#    costly, so it keeps the strong Opus model.
+MODEL = "claude-sonnet-4-6"
 VISION_MODEL = "claude-sonnet-4-6"
+DOCUMENT_MODEL = "claude-opus-4-8"
 # 16000 is the Anthropic-recommended default for non-streaming. It's a *cap*,
 # not a target — short replies still cost only the tokens they actually use.
 # Lowballing this (e.g. 1024) truncates batch operations: a single user message
@@ -126,11 +133,12 @@ class AnthropicBackend(LLMBackend):
         messages: list[dict[str, Any]] = list(history) if history else []
 
         if documents:
-            # PDFs stay on the main model (Opus): document extraction accuracy
-            # on dense legal/insurance text is the high-stakes, once-per-doc
-            # step the whole fact-sheet rides on — unlike high-volume receipt
-            # photos, which go to the cheaper VISION_MODEL below.
-            model = self.model
+            # PDFs go to the strong model (DOCUMENT_MODEL = Opus): document
+            # extraction accuracy on dense legal/insurance text is the
+            # high-stakes, once-per-doc step the whole fact-sheet rides on —
+            # unlike high-volume receipt photos and everyday text, which use the
+            # cheaper Sonnet tier (VISION_MODEL / the default model).
+            model = DOCUMENT_MODEL
             content: list[dict[str, Any]] = []
             for pdf in documents:
                 content.append(
