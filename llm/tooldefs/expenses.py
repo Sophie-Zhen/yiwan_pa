@@ -22,6 +22,7 @@ from tools.inventory import (
 HANDLERS = {
     "record_purchase": lambda a: record_purchase(
         date=a["date"], store=a["store"], items=a["items"], notes=a.get("notes"),
+        receipt_total=a.get("receipt_total"),
     ),
     "record_transaction": lambda a: record_transaction(
         date=a["date"], description=a["description"], amount=a["amount"],
@@ -142,7 +143,16 @@ SCHEMAS = [{'name': 'record_purchase',
                                   'notes': {'type': 'string',
                                             'description': 'Optional trip-level note, applied '
                                                            'to item rows that have no note of '
-                                                           'their own.'}},
+                                                           'their own.'},
+                                  'receipt_total': {'type': 'number',
+                                                    'description': 'The grand total PRINTED on '
+                                                                   'the receipt. Always pass it '
+                                                                   'when visible: the result '
+                                                                   'returns a reconcile block '
+                                                                   'checking it against the sum '
+                                                                   'of the line items, which '
+                                                                   'catches a dropped or '
+                                                                   'miscounted line.'}},
                    'required': ['date', 'store', 'items']}},
  {'name': 'record_transaction',
   'description': 'Record ONE manually-tracked transaction in the 单笔 (transactions) ledger — '
