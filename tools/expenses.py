@@ -52,6 +52,7 @@ def record_purchase(
     store: str,
     items: list[dict],
     notes: str | None = None,
+    receipt_total: float | None = None,
 ) -> dict:
     """Append a shopping trip as N line-item rows sharing one date and store.
 
@@ -70,6 +71,13 @@ def record_purchase(
 
     The top-level `notes` (e.g. "周末囤货") is written to any item row that did
     not carry its own notes.
+
+    `receipt_total` is the grand total PRINTED on the receipt. When given, the
+    result carries a `reconcile` block comparing it against the sum of the line
+    items computed HERE in Python. The line extraction is the error-prone step
+    (a dropped/merged line silently loses money); the printed total is an
+    independent ground truth, so this checksum turns that silent loss into a
+    flagged mismatch the caller must surface instead of reporting a clean save.
     """
     if not items:
         raise ValueError("items must be a non-empty list")
@@ -78,6 +86,7 @@ def record_purchase(
     start_row = sheets.first_empty_row(tab, COL_DATE)
 
     rows: list[list] = []
+    lines_total = 0.0
     for offset, it in enumerate(items):
         r = start_row + offset
         name = it.get("item")
@@ -90,6 +99,11 @@ def record_purchase(
         subtotal = it.get("subtotal")
         if unit_price is None and subtotal is None:
             raise ValueError(f"item {name!r} needs unit_price or subtotal")
+
+        # Effective line amount for the receipt-total checksum: trust the
+        # subtotal when given, else qty × unit_price (mirrors the formula
+        # written below). Computed from the inputs, so no sheet round-trip.
+        lines_total += float(subtotal) if subtotal is not None else float(unit_price) * float(qty)
 
         row = [""] * NUM_COLS
         row[COL_DATE - 1] = date
@@ -124,13 +138,25 @@ def record_purchase(
     # forgotten — same reliability argument as record_investment's upsert.
     inventory_updates = inventory.apply_purchase(date, items)
 
-    return {
+    result = {
         "rows": [start_row, end_row],
         "count": len(rows),
         "date": date,
         "store": store,
         "inventory_updates": inventory_updates,
     }
+    if receipt_total is not None:
+        # Checksum the line items against the printed total. A small mismatch is
+        # often benign (loyalty discount, bag fee, deposit return), so this only
+        # WARNS — the rows are written either way — and lets the caller decide.
+        diff = round(lines_total - float(receipt_total), 2)
+        result["reconcile"] = {
+            "lines_total": round(lines_total, 2),
+            "receipt_total": round(float(receipt_total), 2),
+            "difference": diff,
+            "matched": abs(diff) <= 0.01,
+        }
+    return result
 
 
 # --- 单笔 (transactions ledger) --------------------------------------------

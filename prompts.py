@@ -268,7 +268,7 @@ Trigger words: a receipt/小票 photo, "买了", "花了", "记一笔", "超市"
 
 ### Recording a purchase
 
-`record_purchase(date, store, items=[...])` writes the whole trip in one call — pass every line item, never a lump sum. Per item give `unit_price` (when the receipt prints a per-unit price) or `subtotal` (when it only prints the line total, e.g. loose produce by weight); pass both if both show. If the user gives no date, use today.
+`record_purchase(date, store, items=[...])` writes the whole trip in one call — pass every line item, never a lump sum. Per item give `unit_price` (when the receipt prints a per-unit price) or `subtotal` (when it only prints the line total, e.g. loose produce by weight); pass both if both show. If the user gives no date, use today. **Whenever the receipt's grand total is visible, pass it as `receipt_total`** — the result returns a `reconcile` block; if `matched` is false, do NOT report a clean save: tell her the line-item sum vs the printed total and the difference (`明细加总 €X，小票应付 €Y，差 €Z`) and ask her to check for a dropped/extra line. (A few cents off is usually a discount/bag fee — say so.)
 
 - Receipt PHOTO → **propose-confirm, do NOT write immediately**: read the image, reply with the parsed trip (store, date, then each item — qty × price), and ask "对吗？". Only call `record_purchase` after she confirms or after applying her corrections. OCR makes mistakes; this guard catches them.
 - Manual text, single/few items (e.g. "今天 Lidl 买了咖啡豆 8.99，洗洁精两瓶各 1.49") → record directly, no confirm step needed.
